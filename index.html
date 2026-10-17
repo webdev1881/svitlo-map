@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Svitlobot — карта</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.min.css"/>
+<style>
+  /* кластер: кольоровий круг зі лічильником, колір = колір шару */
+  .mc-icon{background:transparent}
+  .mc-icon div{box-sizing:border-box;border-radius:50%;display:flex;align-items:center;
+    justify-content:center;color:#fff;font-family:system-ui,sans-serif;font-weight:700;line-height:1;
+    border:2px solid rgba(255,255,255,.9);box-shadow:0 1px 4px rgba(0,0,0,.45)}
+  html,body{margin:0;height:100%;font-family:system-ui,sans-serif}
+  #app{height:100%;position:relative}
+  #mymap{height:100vh;height:100dvh}   /* dvh — враховує адресний рядок мобільного браузера */
+  .map-selall{display:flex;width:100%;box-sizing:border-box;overflow:hidden}
+  .map-selall a{flex:1;text-align:center;padding:2px 7px;font-size:11px;line-height:18px;
+    font-weight:600;color:#409eff;text-decoration:none;background:#fff}
+  .map-selall a:first-child{border-right:1px solid #ccc}
+  .map-selall a:hover{background:#f2f6ff}
+  .map-msg{position:absolute;left:50%;top:12px;transform:translateX(-50%);z-index:1000;
+    background:#fff;border-radius:4px;box-shadow:0 1px 5px rgba(0,0,0,.4);padding:6px 12px;font-size:13px}
+  .map-msg.err{color:#c0392b}
+  .map-refresh{position:absolute;left:10px;bottom:28px;z-index:1000;display:flex;align-items:center;gap:8px;
+    background:#fff;border-radius:4px;box-shadow:0 1px 5px rgba(0,0,0,.4);padding:4px 8px;font-size:12px;color:#555}
+  .map-refresh button{border:1px solid #409eff;background:#fff;color:#409eff;border-radius:3px;
+    padding:3px 10px;font-size:12px;font-weight:600;cursor:pointer}
+  .map-refresh button:hover:not(:disabled){background:#f2f6ff}
+  .map-refresh button:disabled{opacity:.6;cursor:default}
+  /* touch-екрани: зручні цілі натискання (~44px) */
+  @media (pointer:coarse){
+    .map-selall a{padding:8px 10px;font-size:13px;line-height:22px}
+    .map-refresh{bottom:34px;padding:6px 10px;font-size:13px}
+    .map-refresh button{padding:10px 14px;font-size:14px}
+    .leaflet-control-layers-overlays label{display:block;padding:6px 2px;font-size:14px}
+    .leaflet-control-layers-selector{width:20px;height:20px;vertical-align:middle}
+  }
+  @media (max-width:600px){
+    .map-refresh span{display:none}   /* на вузькому екрані лишаємо тільки кнопку */
+    .map-msg{top:auto;bottom:90px}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="mymap"></div>
+  <div class="map-refresh">
+    <button type="button" :disabled="loading" @click="load">{{ loading ? 'Оновлення…' : '⟳ Оновити' }}</button>
+    <span v-if="updatedAt">Оновлено: {{ updatedAt }}</span>
+  </div>
+  <div v-if="loading" class="map-msg">Завантаження…</div>
+  <div v-else-if="error" class="map-msg err">Помилка завантаження: {{ error }}</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.4.38/vue.global.prod.min.js"></script>
+<script>
+const { createApp, ref, onMounted, onBeforeUnmount } = Vue;
+
+const API = 'https://api.svitlobot.in.ua/website/getChannelsForMap';
+
+// Поле 1 рядка = статус точки (звірено зі скріном оригінальної карти:
+// 1 — зелені, 2 — червоні райони відключень, 3 — сірі, з давньою датою оновлення).
+// Поле 8 — імовірно тип іконки, не статус.
+const STATUSES = {
+  '1': { color: '#3cb44b', label: 'Світло є' },
+  '2': { color: '#e6194b', label: 'Світла немає' },
+  '3': { color: '#9e9e9e', label: 'Немає даних' }
+};
+
+// Рядок: -1;&&&;тип;&&&;дата;&&&;назва;&&&;id;&&&;N;&&&;lat;&&&;lon;&&&;статус;&&&;-;&&&;1;&&&;
+function parse(text){
+  const layers = {};
+  text.split('\n').forEach(line => {
+    const f = line.split(';&&&;');
+    if(f.length < 9) return;
+    const lat = parseFloat(f[6]), lon = parseFloat(f[7]);
+    if(isNaN(lat) || isNaN(lon)) return;
+    const st = STATUSES[f[1]] || { color: '#888888', label: 'Статус ' + f[1] };
+    const l = layers[f[1]] || (layers[f[1]] = { color: st.color, label: st.label, points: [] });
+    l.points.push([+lat.toFixed(5), +lon.toFixed(5), f[3] + ' (' + f[2].slice(0,16).replace('T',' ') + ')']);
+  });
+  return layers;
+}
+
+createApp({
+  setup(){
+    const loading = ref(true);
+    const error = ref('');
+    const updatedAt = ref('');
+    let lastLoadAt = 0, lastText = '';
+
+    // Стан Leaflet — не реактивний (Leaflet сам керує своїм DOM)
+    let map = null, layerGroups = [], layersCtrl = null, selallCtrl = null;
+    // шари, вимкнені користувачем — зберігаються між оновленнями; «Немає даних» ('3') вимкнено за замовчуванням
+    const hiddenKeys = new Set(['3']);
+
+    // на вузькому екрані (телефон) точки й кластери менші — інакше закривають карту
+    const isNarrow = () => window.matchMedia('(max-width:600px)').matches;
+    const scale = () => isNarrow() ? 0.6 : 1;
+    // радіус поодинокої точки: 4px до zoom 12, плавно росте до 10px на zoom 17+ (× scale, не менше 3px)
+    const radiusFor = z => Math.max(3, Math.round((4 + Math.min(1, Math.max(0, (z - 12) / 5)) * 6) * scale()));
+    let allMarkers = [];
+
+    // чим більший круг, тим прозоріша заливка (щоб не закривав карту): точка 18px → 1, 42px → .45
+    const pointOpacity = r => Math.max(.45, 1 - Math.max(0, r - 18) / 24 * .55);
+    // кластер: до 50px суцільний, 110px → .5
+    const clusterAlpha = d => Math.max(.5, 1 - Math.max(0, d - 50) / 120);
+    const hexToRgba = (hex, a) => {
+      const n = parseInt(hex.slice(1), 16);
+      return 'rgba(' + (n >> 16) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a.toFixed(2) + ')';
+    };
+
+    function initMap(){
+      map = L.map('mymap', { preferCanvas: true }).setView([49.0, 31.5], 6);
+      map.on('zoomend', () => {
+        const r = radiusFor(map.getZoom());
+        const fo = pointOpacity(r);
+        allMarkers.forEach(m => { m.setRadius(r); m.setStyle({ fillOpacity: fo }); });
+      });
+      // OSM блокує запити без Referer — відкривайте через http://localhost, а не file://
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+      }).addTo(map);
+    }
+
+    function renderLayers(layers){
+      layerGroups.forEach(lg => {
+        if(lg._key !== undefined){ map.hasLayer(lg) ? hiddenKeys.delete(lg._key) : hiddenKeys.add(lg._key); }
+        map.removeLayer(lg);
+      });
+      layerGroups = []; allMarkers = [];
+      const overlays = {};
+      Object.keys(layers).sort((a,b) => layers[b].points.length - layers[a].points.length)
+        .forEach(key => {
+          const l = layers[key];
+          const lg = L.markerClusterGroup({
+            chunkedLoading: true,           // не вішає UI при тисячах точок
+            maxClusterRadius: z => Math.max(60, 4 * radiusFor(z)),   // 4 радіуси точки, але не менше 60px
+            disableClusteringAtZoom: 16,     // на близькому зумі показуємо всі точки
+            spiderfyOnMaxZoom: true,         // розкрити точки з однаковими координатами
+            showCoverageOnHover: false,
+            removeOutsideVisibleBounds: true,
+            iconCreateFunction: cluster => {
+              const n = cluster.getChildCount();
+              // діаметр росте з кореня від кількості: 2 → 25px, 10 → 35px, 50 → 58px, 100 → 76px, 300+ → 110px
+              const d = Math.round(Math.min(110, 16 + 6 * Math.sqrt(n)) * Math.max(scale(), 0.75));
+              const fs = Math.max(10, Math.round(d / 4.5));
+              return L.divIcon({
+                html: '<div style="background:' + hexToRgba(l.color, clusterAlpha(d)) + ';width:' + d + 'px;height:' + d + 'px;font-size:' + fs + 'px">' + n + '</div>',
+                className: 'mc-icon',
+                iconSize: L.point(d, d)
+              });
+            }
+          });
+          lg.addLayers(l.points.map(p => {
+            const m = L.circleMarker([p[0], p[1]], {
+              radius: radiusFor(map.getZoom()), color: '#fff', weight: 2, fillColor: l.color, fillOpacity: pointOpacity(radiusFor(map.getZoom()))   // біла обвідка; заливка прозоріша на великих кругах
+            });
+            m._tip = p[2];   // підказка створюється лише при наведенні, а не для кожної точки одразу
+            allMarkers.push(m);
+            return m;
+          }));
+          // mouseover — для миші, click — для touch (там наведення немає)
+          const showTip = e => {
+            if(!e.layer._tip) return;
+            if(!e.layer.getTooltip()) e.layer.bindTooltip(e.layer._tip).openTooltip();
+            else e.layer.openTooltip();
+            e.layer.setStyle({ color: '#222', weight: 3 });   // підсвітка при наведенні/тапі
+            e.layer.bringToFront();
+          };
+          lg.on('mouseover', showTip);
+          lg.on('click', showTip);
+          lg.on('mouseout', e => {
+            if(e.layer._tip) e.layer.setStyle({ color: '#fff', weight: 2 });
+          });
+          lg._key = key;
+          if(!hiddenKeys.has(key)) lg.addTo(map);
+          layerGroups.push(lg);
+          overlays['<span style="color:' + l.color + '">●</span> ' + l.label + ' (' + l.points.length + ')'] = lg;
+        });
+
+      const allGroups = layerGroups.slice();
+      if(selallCtrl) map.removeControl(selallCtrl);
+      selallCtrl = L.control({ position: 'topright' });
+      selallCtrl.onAdd = function(){
+        const div = L.DomUtil.create('div', 'leaflet-bar map-selall');
+        div.innerHTML = '<a href="#" data-on="1">Обрати всі</a><a href="#" data-on="0">Зняти всі</a>';
+        L.DomEvent.disableClickPropagation(div);
+        div.querySelectorAll('a').forEach(a => a.addEventListener('click', ev => {
+          ev.preventDefault();
+          const on = a.getAttribute('data-on') === '1';
+          allGroups.forEach(lg => { on ? map.addLayer(lg) : map.removeLayer(lg); });
+        }));
+        return div;
+      };
+      selallCtrl.addTo(map);
+
+      if(layersCtrl) map.removeControl(layersCtrl);
+      // на вузькому екрані список шарів згорнутий в іконку, на широкому — розгорнутий
+      layersCtrl = L.control.layers(null, overlays, { collapsed: isNarrow() }).addTo(map);
+      setTimeout(() => map.invalidateSize(), 120);
+    }
+
+    async function load(){
+      loading.value = true; error.value = '';
+      try {
+        const r = await fetch(API);
+        if(!r.ok) throw new Error('HTTP ' + r.status);
+        const text = await r.text();
+        // дані не змінились — не перебудовуємо шари (це і є основне гальмо)
+        if(text !== lastText){ lastText = text; renderLayers(parse(text)); }
+        lastLoadAt = Date.now();
+        updatedAt.value = new Date().toLocaleTimeString('uk-UA');
+      } catch(e){
+        error.value = e.message || String(e);
+      } finally {
+        loading.value = false;
+      }
+    }
+
+    const REFRESH_MS = 60000;
+    let timer = null;
+
+    function tick(){
+      if(!document.hidden && !loading.value) load();   // у фоновій вкладці не оновлюємо
+    }
+    function onVisible(){
+      // повернулись у вкладку — підтягнути дані, якщо вони застаріли
+      if(!document.hidden && Date.now() - lastLoadAt >= REFRESH_MS) tick();
+    }
+
+    onMounted(() => {
+      initMap(); load();
+      timer = setInterval(tick, REFRESH_MS);
+      document.addEventListener('visibilitychange', onVisible);
+    });
+    onBeforeUnmount(() => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+      if(map){ map.remove(); map = null; }
+    });
+
+    return { loading, error, updatedAt, load };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>
