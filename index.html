@@ -41,24 +41,79 @@
     .map-refresh span{display:none}   /* на вузькому екрані лишаємо тільки кнопку */
     .map-msg{top:auto;bottom:90px}
   }
+
+  /* вкладки «Карта / Історія» */
+  .tabs{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:1100;display:flex;
+    background:#fff;border-radius:6px;box-shadow:0 1px 5px rgba(0,0,0,.4);overflow:hidden}
+  .tabs button{border:0;background:#fff;color:#555;padding:7px 18px;font-size:13px;font-weight:600;cursor:pointer}
+  .tabs button + button{border-left:1px solid #ddd}
+  .tabs button.on{background:#409eff;color:#fff}
+  @media (max-width:600px){
+    .tabs{top:auto;bottom:34px;left:auto;right:10px;transform:none}   /* знизу, щоб не перекривати контроли карти */
+    .tabs button{padding:10px 16px;font-size:14px}
+  }
+  /* вкладка «Історія» */
+  .history{position:absolute;inset:0;z-index:900;background:#fff;box-sizing:border-box;padding:56px 16px 16px;
+    display:flex;flex-direction:column;gap:12px}
+  .h-head{display:flex;flex-wrap:wrap;align-items:center;gap:12px}
+  .h-stat{display:flex;align-items:baseline;gap:6px;padding:6px 12px;border-radius:6px;background:#f5f7fa;font-size:13px;color:#555}
+  .h-stat b{font-size:22px;line-height:1}
+  .h-meta{flex:1;min-width:160px;font-size:12px;color:#777}
+  .h-head button{border:1px solid #ccc;background:#fff;color:#c0392b;border-radius:4px;padding:6px 12px;font-size:12px;
+    font-weight:600;cursor:pointer}
+  .h-head button:hover{background:#fdf2f2}
+  .h-chart{position:relative;flex:1;min-height:0}
+  .h-note{margin:0;font-size:12px;color:#777}
+  @media (max-width:600px){ .history{padding-bottom:84px} }
 </style>
 </head>
 <body>
 <div id="app">
-  <div id="mymap"></div>
-  <div class="map-refresh">
+  <div class="tabs">
+    <button type="button" :class="{ on: tab === 'map' }" @click="tab = 'map'">Карта</button>
+    <button type="button" :class="{ on: tab === 'history' }" @click="tab = 'history'">Історія</button>
+  </div>
+
+  <!-- v-show, а не v-if: Leaflet-карта не повинна знищуватись при перемиканні вкладок -->
+  <div id="mymap" v-show="tab === 'map'"></div>
+  <div class="map-refresh" v-show="tab === 'map'">
     <button type="button" :disabled="loading" @click="load">{{ loading ? 'Оновлення…' : '⟳ Оновити' }}</button>
     <span v-if="updatedAt">Оновлено: {{ updatedAt }}</span>
   </div>
   <div v-if="loading" class="map-msg">Завантаження…</div>
   <div v-else-if="error" class="map-msg err">Помилка завантаження: {{ error }}</div>
+
+  <div class="history" v-show="tab === 'history'">
+    <div class="h-head">
+      <div class="h-stat"><b :style="{ color: colorOn }">{{ last ? last[1] : '—' }}</b> Світло є</div>
+      <div class="h-stat"><b :style="{ color: colorOff }">{{ last ? last[2] : '—' }}</b> Світла немає</div>
+      <div class="h-meta">{{ historyMeta }}</div>
+      <button type="button" :disabled="!history.length" @click="clearHistory">Очистити історію</button>
+    </div>
+    <div class="h-chart"><canvas id="histChart"></canvas></div>
+    <p class="h-note">Кожне оновлення даних із новими значеннями додає точку. Історія зберігається в цьому браузері
+      і накопичується лише поки сторінка відкрита.</p>
+  </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.4.38/vue.global.prod.min.js"></script>
 <script>
-const { createApp, ref, onMounted, onBeforeUnmount } = Vue;
+const { createApp, ref, computed, watch, nextTick, onMounted, onBeforeUnmount } = Vue;
+
+// Історія оновлень: масив точок [timestamp, «Світло є», «Світла немає»] у localStorage цього браузера
+const HISTORY_KEY = 'svitlo_history_v1', HISTORY_MAX = 10000;
+function loadHistory(){
+  try { const a = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); return Array.isArray(a) ? a : []; }
+  catch(e){ return []; }
+}
+function saveHistory(a){
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(a)); } catch(e){ /* приватний режим / переповнення */ }
+}
+const fmtTime = ts => new Date(ts).toLocaleString('uk-UA',
+  { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
 const API = 'https://api.svitlobot.in.ua/website/getChannelsForMap';
 
@@ -92,6 +147,57 @@ createApp({
     const error = ref('');
     const updatedAt = ref('');
     let lastLoadAt = 0, lastText = '';
+
+    const tab = ref('map');
+    const history = ref(loadHistory());
+    const last = computed(() => history.value.length ? history.value[history.value.length - 1] : null);
+    const historyMeta = computed(() => history.value.length
+      ? 'Записів: ' + history.value.length + ' · з ' + fmtTime(history.value[0][0])
+      : 'Поки що немає записів');
+    const colorOn = STATUSES['1'].color, colorOff = STATUSES['2'].color;
+
+    function addHistory(layers){
+      const on = layers['1'] ? layers['1'].points.length : 0;
+      const off = layers['2'] ? layers['2'].points.length : 0;
+      history.value = history.value.concat([[Date.now(), on, off]]).slice(-HISTORY_MAX);
+      saveHistory(history.value);
+    }
+    function clearHistory(){
+      if(!confirm('Видалити всю збережену історію?')) return;
+      history.value = []; saveHistory([]);
+    }
+
+    // діаграма — не реактивна (Chart.js керує своїм canvas)
+    let chart = null;
+    function lineDataset(label, color, data, many){
+      return { label, data, borderColor: color, backgroundColor: color, borderWidth: 2.5,
+        cubicInterpolationMode: 'monotone',     // плавна крива без «перельотів» між точками
+        pointRadius: many ? 0 : 3, pointHoverRadius: 5 };
+    }
+    function drawChart(){
+      const el = document.getElementById('histChart');
+      if(!el || tab.value !== 'history') return;
+      const h = history.value, many = h.length > 40;
+      const data = {
+        labels: h.map(p => fmtTime(p[0])),
+        datasets: [
+          lineDataset('Світло є', colorOn, h.map(p => p[1]), many),
+          lineDataset('Світла немає', colorOff, h.map(p => p[2]), many)
+        ]
+      };
+      if(chart){ chart.data = data; chart.update(); chart.resize(); return; }
+      chart = new Chart(el, { type: 'line', data, options: {
+        responsive: true, maintainAspectRatio: false, animation: { duration: 400 },
+        interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { position: 'top' } },
+        scales: { x: { ticks: { maxTicksLimit: 8, maxRotation: 0 } }, y: { ticks: { precision: 0 } } }
+      }});
+    }
+    watch(history, () => nextTick(drawChart));
+    watch(tab, async v => {
+      await nextTick();
+      if(v === 'history') drawChart(); else if(map) map.invalidateSize();   // карта була прихована
+    });
 
     // Стан Leaflet — не реактивний (Leaflet сам керує своїм DOM)
     let map = null, layerGroups = [], layersCtrl = null, selallCtrl = null;
@@ -213,7 +319,12 @@ createApp({
         if(!r.ok) throw new Error('HTTP ' + r.status);
         const text = await r.text();
         // дані не змінились — не перебудовуємо шари (це і є основне гальмо)
-        if(text !== lastText){ lastText = text; renderLayers(parse(text)); }
+        if(text !== lastText){
+          lastText = text;
+          const layers = parse(text);
+          renderLayers(layers);
+          addHistory(layers);   // кожне оновлення зі зміненими даними = нова точка історії
+        }
         lastLoadAt = Date.now();
         updatedAt.value = new Date().toLocaleTimeString('uk-UA');
       } catch(e){
@@ -243,9 +354,10 @@ createApp({
       clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisible);
       if(map){ map.remove(); map = null; }
+      if(chart){ chart.destroy(); chart = null; }
     });
 
-    return { loading, error, updatedAt, load };
+    return { loading, error, updatedAt, load, tab, history, last, historyMeta, colorOn, colorOff, clearHistory };
   }
 }).mount('#app');
 </script>
