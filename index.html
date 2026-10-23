@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">  <!-- тема керується самою сторінкою; браузер не «затемнює» її автоматично -->
 <title>Svitlobot — карта</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.min.css"/>
@@ -62,9 +63,20 @@
   .h-head button{border:1px solid #ccc;background:#fff;color:#c0392b;border-radius:4px;padding:6px 12px;font-size:12px;
     font-weight:600;cursor:pointer}
   .h-head button:hover{background:#fdf2f2}
+  .h-head button:disabled{opacity:.5;cursor:default}
   .h-chart{position:relative;flex:1;min-height:0}
   .h-note{margin:0;font-size:12px;color:#777}
   @media (max-width:600px){ .history{padding-bottom:84px} }
+  .h-head .h-theme{color:#555}
+  .h-head .h-theme:hover{background:#f2f6ff}
+  /* темна тема вкладки «Історія» */
+  .history.dark{background:#14171c;color:#d8dde6}
+  .history.dark .h-stat{background:#1f242c;color:#aab2bf}
+  .history.dark .h-meta,.history.dark .h-note{color:#8b94a3}
+  .history.dark .h-head button{background:#1f242c;border-color:#3a414c}
+  .history.dark .h-head button:hover{background:#2a303a}
+  .history.dark .h-head .h-theme{color:#d8dde6}
+  .history.dark .h-head .h-clear{color:#ff7a6b}
 </style>
 </head>
 <body>
@@ -83,12 +95,13 @@
   <div v-if="loading" class="map-msg">Завантаження…</div>
   <div v-else-if="error" class="map-msg err">Помилка завантаження: {{ error }}</div>
 
-  <div class="history" v-show="tab === 'history'">
+  <div class="history" :class="{ dark }" v-show="tab === 'history'">
     <div class="h-head">
       <div class="h-stat"><b :style="{ color: colorOn }">{{ last ? last[1] : '—' }}</b> Світло є</div>
       <div class="h-stat"><b :style="{ color: colorOff }">{{ last ? last[2] : '—' }}</b> Світла немає</div>
       <div class="h-meta">{{ historyMeta }}</div>
-      <button type="button" :disabled="!history.length" @click="clearHistory">Очистити історію</button>
+      <button type="button" class="h-theme" @click="dark = !dark">{{ dark ? '☀ Світла тема' : '🌙 Темна тема' }}</button>
+      <button type="button" class="h-clear" :disabled="!history.length" @click="clearHistory">Очистити історію</button>
     </div>
     <div class="h-chart"><canvas id="histChart"></canvas></div>
     <p class="h-note">Кожне успішне оновлення (раз на хвилину) додає точку. Історія зберігається в цьому браузері
@@ -153,6 +166,18 @@ createApp({
     const readTab = () => { try { const t = localStorage.getItem(TAB_KEY); return t === 'history' ? 'history' : 'map'; } catch(e){ return 'map'; } };
     const tab = ref(readTab());
     watch(tab, v => { try { localStorage.setItem(TAB_KEY, v); } catch(e){} });
+
+    // тема вкладки «Історія» (світла/темна), теж у localStorage
+    const THEME_KEY = 'svitlo_theme_v1';
+    const readDark = () => { try { return localStorage.getItem(THEME_KEY) === 'dark'; } catch(e){ return false; } };
+    const dark = ref(readDark());
+    const themeColors = () => dark.value
+      ? { text: '#aab2bf', grid: 'rgba(255,255,255,.10)' }
+      : { text: '#666666', grid: 'rgba(0,0,0,.08)' };
+    watch(dark, v => {
+      try { localStorage.setItem(THEME_KEY, v ? 'dark' : 'light'); } catch(e){}
+      applyChartTheme();
+    });
     const history = ref(loadHistory());
     const last = computed(() => history.value.length ? history.value[history.value.length - 1] : null);
     const historyMeta = computed(() => history.value.length
@@ -190,7 +215,8 @@ createApp({
             const t = String(v);
             if(pt.x - lastX < ctx.measureText(t).width + 14) return;
             lastX = pt.x; lastV = v;
-            ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.strokeText(t, pt.x, pt.y - 7);   // біле «гало» для читабельності
+            ctx.lineWidth = 3; ctx.strokeStyle = dark.value ? 'rgba(20,23,28,.9)' : 'rgba(255,255,255,.9)';   // «гало» під колір теми
+            ctx.strokeText(t, pt.x, pt.y - 7);
             ctx.fillStyle = ds.borderColor; ctx.fillText(t, pt.x, pt.y - 7);
           });
         });
@@ -218,9 +244,19 @@ createApp({
         responsive: true, maintainAspectRatio: false, animation: { duration: 400 },
         layout: { padding: { top: 20, right: 14 } },   // місце під підписи верхніх точок
         interaction: { mode: 'index', intersect: false },
-        plugins: { legend: { position: 'top' } },
-        scales: { x: { ticks: { maxTicksLimit: 8, maxRotation: 0 } }, y: { ticks: { precision: 0 } } }
+        plugins: { legend: { position: 'top', labels: { color: themeColors().text } } },
+        scales: {
+          x: { ticks: { maxTicksLimit: 8, maxRotation: 0, color: themeColors().text }, grid: { color: themeColors().grid } },
+          y: { ticks: { precision: 0, color: themeColors().text }, grid: { color: themeColors().grid } }
+        }
       }});
+    }
+    function applyChartTheme(){
+      if(!chart) return;
+      const c = themeColors(), o = chart.options;
+      o.plugins.legend.labels.color = c.text;
+      ['x', 'y'].forEach(a => { o.scales[a].ticks.color = c.text; o.scales[a].grid.color = c.grid; });
+      chart.update('none');
     }
     watch(history, () => nextTick(drawChart));
     watch(tab, async v => {
@@ -391,7 +427,7 @@ createApp({
       if(chart){ chart.destroy(); chart = null; }
     });
 
-    return { loading, error, updatedAt, load, tab, history, last, historyMeta, colorOn, colorOff, clearHistory };
+    return { loading, error, updatedAt, load, tab, history, last, historyMeta, colorOn, colorOff, clearHistory, dark };
   }
 }).mount('#app');
 </script>
