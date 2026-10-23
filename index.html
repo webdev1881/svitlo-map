@@ -148,7 +148,11 @@ createApp({
     const updatedAt = ref('');
     let lastLoadAt = 0, lastText = '', lastCounts = { on: 0, off: 0 };
 
-    const tab = ref('map');
+    // активна вкладка запам'ятовується між оновленнями сторінки (localStorage, з try/catch)
+    const TAB_KEY = 'svitlo_tab_v1';
+    const readTab = () => { try { const t = localStorage.getItem(TAB_KEY); return t === 'history' ? 'history' : 'map'; } catch(e){ return 'map'; } };
+    const tab = ref(readTab());
+    watch(tab, v => { try { localStorage.setItem(TAB_KEY, v); } catch(e){} });
     const history = ref(loadHistory());
     const last = computed(() => history.value.length ? history.value[history.value.length - 1] : null);
     const historyMeta = computed(() => history.value.length
@@ -376,6 +380,7 @@ createApp({
 
     onMounted(() => {
       initMap(); load();
+      if(tab.value === 'history') nextTick(drawChart);   // сторінку відкрито одразу на історії
       timer = setInterval(tick, REFRESH_MS);
       document.addEventListener('visibilitychange', onVisible);
     });
