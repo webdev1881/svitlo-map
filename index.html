@@ -91,7 +91,7 @@
       <button type="button" :disabled="!history.length" @click="clearHistory">Очистити історію</button>
     </div>
     <div class="h-chart"><canvas id="histChart"></canvas></div>
-    <p class="h-note">Кожне оновлення даних із новими значеннями додає точку. Історія зберігається в цьому браузері
+    <p class="h-note">Кожне успішне оновлення (раз на хвилину) додає точку. Історія зберігається в цьому браузері
       і накопичується лише поки сторінка відкрита.</p>
   </div>
 </div>
@@ -146,7 +146,7 @@ createApp({
     const loading = ref(true);
     const error = ref('');
     const updatedAt = ref('');
-    let lastLoadAt = 0, lastText = '';
+    let lastLoadAt = 0, lastText = '', lastCounts = { on: 0, off: 0 };
 
     const tab = ref('map');
     const history = ref(loadHistory());
@@ -156,10 +156,8 @@ createApp({
       : 'Поки що немає записів');
     const colorOn = STATUSES['1'].color, colorOff = STATUSES['2'].color;
 
-    function addHistory(layers){
-      const on = layers['1'] ? layers['1'].points.length : 0;
-      const off = layers['2'] ? layers['2'].points.length : 0;
-      history.value = history.value.concat([[Date.now(), on, off]]).slice(-HISTORY_MAX);
+    function addHistory(counts){
+      history.value = history.value.concat([[Date.now(), counts.on, counts.off]]).slice(-HISTORY_MAX);
       saveHistory(history.value);
     }
     function clearHistory(){
@@ -323,8 +321,12 @@ createApp({
           lastText = text;
           const layers = parse(text);
           renderLayers(layers);
-          addHistory(layers);   // кожне оновлення зі зміненими даними = нова точка історії
+          lastCounts = {
+            on: layers['1'] ? layers['1'].points.length : 0,
+            off: layers['2'] ? layers['2'].points.length : 0
+          };
         }
+        addHistory(lastCounts);   // кожне успішне оновлення = нова точка історії (час збігається з «Оновлено»)
         lastLoadAt = Date.now();
         updatedAt.value = new Date().toLocaleTimeString('uk-UA');
       } catch(e){
