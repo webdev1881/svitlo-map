@@ -167,6 +167,32 @@ createApp({
 
     // діаграма — не реактивна (Chart.js керує своїм canvas)
     let chart = null;
+    // Підписи значень над точками. Щоб не злипались при сотнях точок: підписуємо першу точку та ті, де значення
+    // змінилось відносно останньої підписаної, і лише якщо від попереднього підпису є місце по горизонталі.
+    const valueLabels = {
+      id: 'valueLabels',
+      afterDatasetsDraw(c){
+        const ctx = c.ctx;
+        ctx.save();
+        ctx.font = '600 11px system-ui, sans-serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.lineJoin = 'round';
+        c.data.datasets.forEach((ds, i) => {
+          const meta = c.getDatasetMeta(i);
+          if(meta.hidden) return;
+          let lastX = -Infinity, lastV = null;
+          meta.data.forEach((pt, j) => {
+            const v = ds.data[j];
+            if(v == null || v === lastV) return;
+            const t = String(v);
+            if(pt.x - lastX < ctx.measureText(t).width + 14) return;
+            lastX = pt.x; lastV = v;
+            ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.strokeText(t, pt.x, pt.y - 7);   // біле «гало» для читабельності
+            ctx.fillStyle = ds.borderColor; ctx.fillText(t, pt.x, pt.y - 7);
+          });
+        });
+        ctx.restore();
+      }
+    };
     function lineDataset(label, color, data, many){
       return { label, data, borderColor: color, backgroundColor: color, borderWidth: 2.5,
         cubicInterpolationMode: 'monotone',     // плавна крива без «перельотів» між точками
@@ -184,8 +210,9 @@ createApp({
         ]
       };
       if(chart){ chart.data = data; chart.update(); chart.resize(); return; }
-      chart = new Chart(el, { type: 'line', data, options: {
+      chart = new Chart(el, { type: 'line', data, plugins: [valueLabels], options: {
         responsive: true, maintainAspectRatio: false, animation: { duration: 400 },
+        layout: { padding: { top: 20, right: 14 } },   // місце під підписи верхніх точок
         interaction: { mode: 'index', intersect: false },
         plugins: { legend: { position: 'top' } },
         scales: { x: { ticks: { maxTicksLimit: 8, maxRotation: 0 } }, y: { ticks: { precision: 0 } } }
