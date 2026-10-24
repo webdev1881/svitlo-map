@@ -67,7 +67,8 @@
   .h-chart{position:relative;flex:1;min-height:0}
   .h-note{margin:0;font-size:12px;color:#777}
   @media (max-width:600px){ .history{padding-bottom:84px} }
-  .h-head .h-theme{color:#555}
+  .h-head .h-theme,.h-head .h-tog{color:#555}
+  .h-head .h-tog.on{background:#e8f0ff;border-color:#3b82f6;color:#1d4ed8}
   .h-head .h-theme:hover{background:#f2f6ff}
   /* темна тема вкладки «Історія» */
   .history.dark{background:#14171c;color:#d8dde6}
@@ -75,7 +76,8 @@
   .history.dark .h-meta,.history.dark .h-note{color:#8b94a3}
   .history.dark .h-head button{background:#1f242c;border-color:#3a414c}
   .history.dark .h-head button:hover{background:#2a303a}
-  .history.dark .h-head .h-theme{color:#d8dde6}
+  .history.dark .h-head .h-theme,.history.dark .h-head .h-tog{color:#d8dde6}
+  .history.dark .h-head .h-tog.on{background:#1e3157;border-color:#6ea8ff;color:#a9c8ff}
   .history.dark .h-head .h-clear{color:#ff7a6b}
 </style>
 </head>
@@ -100,6 +102,8 @@
       <div class="h-stat"><b :style="{ color: colorOn }">{{ last ? last[1] : '—' }}</b> Світло є</div>
       <div class="h-stat"><b :style="{ color: colorOff }">{{ last ? last[2] : '—' }}</b> Світла немає</div>
       <div class="h-meta">{{ historyMeta }}</div>
+      <button type="button" class="h-tog" :class="{ on: showLines }" @click="showLines = !showLines">2 лінії</button>
+      <button type="button" class="h-tog" :class="{ on: showPct }" @click="showPct = !showPct">% зі світлом</button>
       <button type="button" class="h-theme" @click="dark = !dark">{{ dark ? '☀ Світла тема' : '🌙 Темна тема' }}</button>
       <button type="button" class="h-clear" :disabled="!history.length" @click="clearHistory">Очистити історію</button>
     </div>
@@ -178,6 +182,16 @@ createApp({
       try { localStorage.setItem(THEME_KEY, v ? 'dark' : 'light'); } catch(e){}
       applyChartTheme();
     });
+    // які лінії показувати: «2 лінії» (кількість) і/або «% зі світлом» (on / (on + off)); окремі перемикачі в localStorage
+    const LINES_KEY = 'svitlo_chart_lines_v1', PCT_KEY = 'svitlo_chart_pct_v1';
+    const readFlag = (k, def) => { try { const v = localStorage.getItem(k); return v === null ? def : v === '1'; } catch(e){ return def; } };
+    const showLines = ref(readFlag(LINES_KEY, true)), showPct = ref(readFlag(PCT_KEY, false));
+    const colorPct = '#3b82f6';
+    watch([showLines, showPct], () => {
+      try { localStorage.setItem(LINES_KEY, showLines.value ? '1' : '0'); localStorage.setItem(PCT_KEY, showPct.value ? '1' : '0'); } catch(e){}
+      if(chart){ chart.destroy(); chart = null; }   // осі змінюються — простіше перестворити діаграму
+      nextTick(drawChart);
+    });
     const history = ref(loadHistory());
     const last = computed(() => history.value.length ? history.value[history.value.length - 1] : null);
     const historyMeta = computed(() => history.value.length
@@ -212,7 +226,7 @@ createApp({
           meta.data.forEach((pt, j) => {
             const v = ds.data[j];
             if(v == null || v === lastV) return;
-            const t = String(v);
+            const t = String(v) + (ds.suffix || '');
             if(pt.x - lastX < ctx.measureText(t).width + 14) return;
             lastX = pt.x; lastV = v;
             ctx.lineWidth = 3; ctx.strokeStyle = dark.value ? 'rgba(20,23,28,.9)' : 'rgba(255,255,255,.9)';   // «гало» під колір теми
@@ -223,8 +237,8 @@ createApp({
         ctx.restore();
       }
     };
-    function lineDataset(label, color, data, many){
-      return { label, data, borderColor: color, backgroundColor: color, borderWidth: 2.5,
+    function lineDataset(label, color, data, many, extra){
+      return { ...extra, label, data, borderColor: color, backgroundColor: color, borderWidth: 2.5,
         cubicInterpolationMode: 'monotone',     // плавна крива без «перельотів» між точками
         pointRadius: many ? 0 : 3, pointHoverRadius: 5 };
     }
@@ -234,10 +248,16 @@ createApp({
       const h = history.value, many = h.length > 40;
       const data = {
         labels: h.map(p => fmtTime(p[0])),
-        datasets: [
-          lineDataset('Світло є', colorOn, h.map(p => p[1]), many),
-          lineDataset('Світла немає', colorOff, h.map(p => p[2]), many)
-        ]
+        datasets: [].concat(
+          showLines.value ? [
+            lineDataset('Світло є', colorOn, h.map(p => p[1]), many),
+            lineDataset('Світла немає', colorOff, h.map(p => p[2]), many)
+          ] : [],
+          showPct.value ? [
+            lineDataset('% зі світлом', colorPct,
+              h.map(p => p[1] + p[2] ? +(p[1] / (p[1] + p[2]) * 100).toFixed(1) : null), many,
+              { yAxisID: 'y2', suffix: '%' })
+          ] : [])
       };
       if(chart){ chart.data = data; chart.update(); chart.resize(); return; }
       chart = new Chart(el, { type: 'line', data, plugins: [valueLabels], options: {
@@ -247,7 +267,10 @@ createApp({
         plugins: { legend: { position: 'top', labels: { color: themeColors().text } } },
         scales: {
           x: { ticks: { maxTicksLimit: 8, maxRotation: 0, color: themeColors().text }, grid: { color: themeColors().grid } },
-          y: { ticks: { precision: 0, color: themeColors().text }, grid: { color: themeColors().grid } }
+          y: { display: showLines.value, ticks: { precision: 0, color: themeColors().text }, grid: { color: themeColors().grid } },
+          y2: { display: showPct.value, position: 'right', min: 0, max: 100,
+            ticks: { color: themeColors().text, callback: v => v + '%' },
+            grid: { color: themeColors().grid, drawOnChartArea: !showLines.value } }
         }
       }});
     }
@@ -255,7 +278,7 @@ createApp({
       if(!chart) return;
       const c = themeColors(), o = chart.options;
       o.plugins.legend.labels.color = c.text;
-      ['x', 'y'].forEach(a => { o.scales[a].ticks.color = c.text; o.scales[a].grid.color = c.grid; });
+      ['x', 'y', 'y2'].forEach(a => { o.scales[a].ticks.color = c.text; o.scales[a].grid.color = c.grid; });
       chart.update('none');
     }
     watch(history, () => nextTick(drawChart));
@@ -427,7 +450,7 @@ createApp({
       if(chart){ chart.destroy(); chart = null; }
     });
 
-    return { loading, error, updatedAt, load, tab, history, last, historyMeta, colorOn, colorOff, clearHistory, dark };
+    return { loading, error, updatedAt, load, tab, history, last, historyMeta, colorOn, colorOff, clearHistory, dark, showLines, showPct };
   }
 }).mount('#app');
 </script>
