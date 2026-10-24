@@ -264,8 +264,9 @@ createApp({
           ] : [])
       };
       // верхня межа шкали кількості = максимум даних + 30% запасу (місце під підписи)
+      const pctMax = headroom.value ? 130 : 100;   // шкала % теж із запасом, мітки показуємо лише до 100%
       const top = headroom.value ? Math.ceil(Math.max(0, ...h.map(p => Math.max(p[1], p[2]))) * 1.3) : 0;
-      if(chart){ chart.data = data; chart.options.scales.y.max = top || undefined; chart.update(); chart.resize(); return; }
+      if(chart){ chart.data = data; chart.options.scales.y.max = top || undefined; chart.options.scales.y2.max = pctMax; chart.update(); chart.resize(); return; }
       chart = new Chart(el, { type: 'line', data, plugins: [valueLabels], options: {
         responsive: true, maintainAspectRatio: false, animation: { duration: 400 },
         layout: { padding: { top: 20, right: 14 } },   // місце під підписи верхніх точок
@@ -274,7 +275,7 @@ createApp({
         scales: {
           x: { ticks: { maxTicksLimit: 8, maxRotation: 0, color: themeColors().text }, grid: { color: themeColors().grid } },
           y: { display: showLines.value, max: top || undefined, ticks: { precision: 0, color: themeColors().text }, grid: { color: themeColors().grid } },
-          y2: { display: showPct.value, position: 'right', min: 0, max: 100,
+          y2: { display: showPct.value, position: 'right', min: 0, max: pctMax, afterBuildTicks: ax => { ax.ticks = ax.ticks.filter(t => t.value <= 100); },
             ticks: { color: themeColors().text, callback: v => v + '%' },
             grid: { color: themeColors().grid, drawOnChartArea: !showLines.value } }
         }
