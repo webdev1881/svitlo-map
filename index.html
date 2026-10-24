@@ -104,6 +104,7 @@
       <div class="h-meta">{{ historyMeta }}</div>
       <button type="button" class="h-tog" :class="{ on: showLines }" @click="showLines = !showLines">2 лінії</button>
       <button type="button" class="h-tog" :class="{ on: showPct }" @click="showPct = !showPct">% зі світлом</button>
+      <button type="button" class="h-tog" :class="{ on: headroom }" title="Верхня межа шкали кількості = максимум + 30%" @click="headroom = !headroom">+30% зверху</button>
       <button type="button" class="h-theme" @click="dark = !dark">{{ dark ? '☀ Світла тема' : '🌙 Темна тема' }}</button>
       <button type="button" class="h-clear" :disabled="!history.length" @click="clearHistory">Очистити історію</button>
     </div>
@@ -187,7 +188,10 @@ createApp({
     const readFlag = (k, def) => { try { const v = localStorage.getItem(k); return v === null ? def : v === '1'; } catch(e){ return def; } };
     const showLines = ref(readFlag(LINES_KEY, true)), showPct = ref(readFlag(PCT_KEY, false));
     const colorPct = '#3b82f6';
-    watch([showLines, showPct], () => {
+    const HEADROOM_KEY = 'svitlo_chart_headroom_v1';
+    const headroom = ref(readFlag(HEADROOM_KEY, true));   // запас +30% зверху шкали кількості
+    watch([showLines, showPct, headroom], () => {
+      try { localStorage.setItem(HEADROOM_KEY, headroom.value ? '1' : '0'); } catch(e){}
       try { localStorage.setItem(LINES_KEY, showLines.value ? '1' : '0'); localStorage.setItem(PCT_KEY, showPct.value ? '1' : '0'); } catch(e){}
       if(chart){ chart.destroy(); chart = null; }   // осі змінюються — простіше перестворити діаграму
       nextTick(drawChart);
@@ -260,7 +264,7 @@ createApp({
           ] : [])
       };
       // верхня межа шкали кількості = максимум даних + 30% запасу (місце під підписи)
-      const top = Math.ceil(Math.max(0, ...h.map(p => Math.max(p[1], p[2]))) * 1.3);
+      const top = headroom.value ? Math.ceil(Math.max(0, ...h.map(p => Math.max(p[1], p[2]))) * 1.3) : 0;
       if(chart){ chart.data = data; chart.options.scales.y.max = top || undefined; chart.update(); chart.resize(); return; }
       chart = new Chart(el, { type: 'line', data, plugins: [valueLabels], options: {
         responsive: true, maintainAspectRatio: false, animation: { duration: 400 },
@@ -452,7 +456,7 @@ createApp({
       if(chart){ chart.destroy(); chart = null; }
     });
 
-    return { loading, error, updatedAt, load, tab, history, last, historyMeta, colorOn, colorOff, clearHistory, dark, showLines, showPct };
+    return { loading, error, updatedAt, load, tab, history, last, historyMeta, colorOn, colorOff, clearHistory, dark, showLines, showPct, headroom };
   }
 }).mount('#app');
 </script>
