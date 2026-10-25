@@ -7,6 +7,8 @@
 <title>Svitlobot — карта</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.min.css"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/element-plus@2.8.1/dist/index.css"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/element-plus@2.8.1/theme-chalk/dark/css-vars.css"/>
 <style>
   /* кластер: кольоровий круг зі лічильником, колір = колір шару */
   .mc-icon{background:transparent}
@@ -23,94 +25,87 @@
   .map-selall a:hover{background:#f2f6ff}
   .map-msg{position:absolute;left:50%;top:12px;transform:translateX(-50%);z-index:1000;
     background:#fff;border-radius:4px;box-shadow:0 1px 5px rgba(0,0,0,.4);padding:6px 12px;font-size:13px}
-  .map-msg.err{color:#c0392b}
+  .map-alert{position:absolute;left:50%;top:12px;transform:translateX(-50%);z-index:1000;width:auto;max-width:90vw}
   .map-refresh{position:absolute;left:10px;bottom:28px;z-index:1000;display:flex;align-items:center;gap:8px;
     background:#fff;border-radius:4px;box-shadow:0 1px 5px rgba(0,0,0,.4);padding:4px 8px;font-size:12px;color:#555}
-  .map-refresh button{border:1px solid #409eff;background:#fff;color:#409eff;border-radius:3px;
-    padding:3px 10px;font-size:12px;font-weight:600;cursor:pointer}
-  .map-refresh button:hover:not(:disabled){background:#f2f6ff}
-  .map-refresh button:disabled{opacity:.6;cursor:default}
   /* touch-екрани: зручні цілі натискання (~44px) */
   @media (pointer:coarse){
     .map-selall a{padding:8px 10px;font-size:13px;line-height:22px}
     .map-refresh{bottom:34px;padding:6px 10px;font-size:13px}
-    .map-refresh button{padding:10px 14px;font-size:14px}
+    .map-refresh .el-button{height:auto;padding:10px 14px;font-size:14px}
     .leaflet-control-layers-overlays label{display:block;padding:6px 2px;font-size:14px}
     .leaflet-control-layers-selector{width:20px;height:20px;vertical-align:middle}
   }
   @media (max-width:600px){
     .map-refresh span{display:none}   /* на вузькому екрані лишаємо тільки кнопку */
-    .map-msg{top:auto;bottom:90px}
+    .map-msg,.map-alert{top:auto;bottom:90px}
   }
 
   /* вкладки «Карта / Історія» */
-  .tabs{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:1100;display:flex;
-    background:#fff;border-radius:6px;box-shadow:0 1px 5px rgba(0,0,0,.4);overflow:hidden}
-  .tabs button{border:0;background:#fff;color:#555;padding:7px 18px;font-size:13px;font-weight:600;cursor:pointer}
-  .tabs button + button{border-left:1px solid #ddd}
-  .tabs button.on{background:#409eff;color:#fff}
+  .tabs{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:1100;border-radius:4px;
+    background:var(--el-bg-color);box-shadow:0 1px 5px rgba(0,0,0,.4)}
   @media (max-width:600px){
     .tabs{top:auto;bottom:34px;left:auto;right:10px;transform:none}   /* знизу, щоб не перекривати контроли карти */
-    .tabs button{padding:10px 16px;font-size:14px}
+    .tabs .el-radio-button__inner{padding:12px 18px;font-size:14px}
   }
-  /* вкладка «Історія» */
-  .history{position:absolute;inset:0;z-index:900;background:#fff;box-sizing:border-box;padding:56px 16px 16px;
-    display:flex;flex-direction:column;gap:12px}
-  .h-head{display:flex;flex-wrap:wrap;align-items:center;gap:12px}
-  .h-stat{display:flex;align-items:baseline;gap:6px;padding:6px 12px;border-radius:6px;background:#f5f7fa;font-size:13px;color:#555}
-  .h-stat b{font-size:22px;line-height:1}
-  .h-meta{flex:1;min-width:160px;font-size:12px;color:#777}
-  .h-head button{border:1px solid #ccc;background:#fff;color:#c0392b;border-radius:4px;padding:6px 12px;font-size:12px;
-    font-weight:600;cursor:pointer}
-  .h-head button:hover{background:#fdf2f2}
-  .h-head button:disabled{opacity:.5;cursor:default}
-  .h-chart{position:relative;flex:1;min-height:0}
-  .h-note{margin:0;font-size:12px;color:#777}
+  /* вкладка «Історія»: кольори беруться з CSS-змінних Element Plus (темна тема = html.dark, лише на цій вкладці) */
+  .history{position:absolute;inset:0;z-index:900;background:var(--el-bg-color);color:var(--el-text-color-primary);
+    box-sizing:border-box;padding:56px 16px 16px;display:flex;flex-direction:column;gap:12px}
+  .h-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+  .h-stat .el-card__body{padding:6px 14px}
+  .h-stat .el-statistic__head{font-size:12px;margin-bottom:2px}
+  .h-stat .el-statistic__content{font-size:22px;font-weight:700}
+  .h-meta{flex:1;min-width:160px;font-size:12px;color:var(--el-text-color-secondary)}
+  .h-ctl{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  .h-ctl .el-check-tag{cursor:pointer}
+  .h-chart-card{flex:1;min-height:0;display:flex;flex-direction:column}
+  .h-chart-card .el-card__body{flex:1;min-height:0;position:relative;padding:8px}
+  .h-chart{position:absolute;inset:8px}
+  .history > .el-text{align-self:flex-start}
+  .h-empty{position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;background:var(--el-bg-color)}
   @media (max-width:600px){ .history{padding-bottom:84px} }
-  .h-head .h-theme,.h-head .h-tog{color:#555}
-  .h-head .h-tog.on{background:#e8f0ff;border-color:#3b82f6;color:#1d4ed8}
-  .h-head .h-theme:hover{background:#f2f6ff}
-  /* темна тема вкладки «Історія» */
-  .history.dark{background:#14171c;color:#d8dde6}
-  .history.dark .h-stat{background:#1f242c;color:#aab2bf}
-  .history.dark .h-meta,.history.dark .h-note{color:#8b94a3}
-  .history.dark .h-head button{background:#1f242c;border-color:#3a414c}
-  .history.dark .h-head button:hover{background:#2a303a}
-  .history.dark .h-head .h-theme,.history.dark .h-head .h-tog{color:#d8dde6}
-  .history.dark .h-head .h-tog.on{background:#1e3157;border-color:#6ea8ff;color:#a9c8ff}
-  .history.dark .h-head .h-clear{color:#ff7a6b}
 </style>
 </head>
 <body>
 <div id="app">
   <div class="tabs">
-    <button type="button" :class="{ on: tab === 'map' }" @click="tab = 'map'">Карта</button>
-    <button type="button" :class="{ on: tab === 'history' }" @click="tab = 'history'">Історія</button>
+    <el-radio-group v-model="tab">
+      <el-radio-button value="map">Карта</el-radio-button>
+      <el-radio-button value="history">Історія</el-radio-button>
+    </el-radio-group>
   </div>
 
   <!-- v-show, а не v-if: Leaflet-карта не повинна знищуватись при перемиканні вкладок -->
   <div id="mymap" v-show="tab === 'map'"></div>
   <div class="map-refresh" v-show="tab === 'map'">
-    <button type="button" :disabled="loading" @click="load">{{ loading ? 'Оновлення…' : '⟳ Оновити' }}</button>
+    <el-button size="small" type="primary" plain :loading="loading" @click="load">{{ loading ? 'Оновлення…' : '⟳ Оновити' }}</el-button>
     <span v-if="updatedAt">Оновлено: {{ updatedAt }}</span>
   </div>
   <div v-if="loading" class="map-msg">Завантаження…</div>
-  <div v-else-if="error" class="map-msg err">Помилка завантаження: {{ error }}</div>
+  <el-alert v-else-if="error" class="map-alert" type="error" show-icon :closable="false" :title="'Помилка завантаження: ' + error"></el-alert>
 
-  <div class="history" :class="{ dark }" v-show="tab === 'history'">
+  <div class="history" v-show="tab === 'history'">
     <div class="h-head">
-      <div class="h-stat"><b :style="{ color: colorOn }">{{ last ? last[1] : '—' }}</b> Світло є</div>
-      <div class="h-stat"><b :style="{ color: colorOff }">{{ last ? last[2] : '—' }}</b> Світла немає</div>
+      <el-card class="h-stat" shadow="never"><el-statistic group-separator=" " title="Світло є" :value="last ? last[1] : '—'" :value-style="{ color: colorOn }"></el-statistic></el-card>
+      <el-card class="h-stat" shadow="never"><el-statistic group-separator=" " title="Світла немає" :value="last ? last[2] : '—'" :value-style="{ color: colorOff }"></el-statistic></el-card>
       <div class="h-meta">{{ historyMeta }}</div>
-      <button type="button" class="h-tog" :class="{ on: showLines }" @click="showLines = !showLines">2 лінії</button>
-      <button type="button" class="h-tog" :class="{ on: showPct }" @click="showPct = !showPct">% зі світлом</button>
-      <button type="button" class="h-tog" :class="{ on: headroom }" title="Верхня межа шкали кількості = максимум + 30%" @click="headroom = !headroom">+30% зверху</button>
-      <button type="button" class="h-theme" @click="dark = !dark">{{ dark ? '☀ Світла тема' : '🌙 Темна тема' }}</button>
-      <button type="button" class="h-clear" :disabled="!history.length" @click="clearHistory">Очистити історію</button>
+      <div class="h-ctl">
+        <el-check-tag :checked="showLines" @change="v => showLines = v">2 лінії</el-check-tag>
+        <el-check-tag :checked="showPct" @change="v => showPct = v">% зі світлом</el-check-tag>
+        <el-check-tag :checked="headroom" @change="v => headroom = v">+30% зверху</el-check-tag>
+        <el-button @click="dark = !dark">{{ dark ? '☀ Світла тема' : '🌙 Темна тема' }}</el-button>
+        <el-popconfirm :width="240" title="Видалити всю збережену історію?" confirm-button-text="Видалити" cancel-button-text="Скасувати"
+          confirm-button-type="danger" @confirm="clearHistory">
+          <template #reference><el-button type="danger" plain :disabled="!history.length">Очистити історію</el-button></template>
+        </el-popconfirm>
+      </div>
     </div>
-    <div class="h-chart"><canvas id="histChart"></canvas></div>
-    <p class="h-note">Кожне успішне оновлення (раз на хвилину) додає точку. Історія зберігається в цьому браузері
-      і накопичується лише поки сторінка відкрита.</p>
+    <el-card class="h-chart-card" shadow="never">
+      <el-empty v-if="!history.length" class="h-empty" description="Поки що немає записів"></el-empty>
+      <div class="h-chart"><canvas id="histChart"></canvas></div>
+    </el-card>
+    <el-text type="info" size="small">Кожне успішне оновлення (раз на хвилину) додає точку. Історія зберігається в цьому браузері
+      і накопичується лише поки сторінка відкрита.</el-text>
   </div>
 </div>
 
@@ -118,6 +113,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.4.38/vue.global.prod.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/element-plus@2.8.1/dist/index.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/element-plus@2.8.1/dist/locale/uk.min.js"></script>
 <script>
 const { createApp, ref, computed, watch, nextTick, onMounted, onBeforeUnmount } = Vue;
 
@@ -187,7 +184,7 @@ createApp({
     const LINES_KEY = 'svitlo_chart_lines_v1', PCT_KEY = 'svitlo_chart_pct_v1';
     const readFlag = (k, def) => { try { const v = localStorage.getItem(k); return v === null ? def : v === '1'; } catch(e){ return def; } };
     const showLines = ref(readFlag(LINES_KEY, true)), showPct = ref(readFlag(PCT_KEY, false));
-    const colorPct = '#3b82f6';
+    const colorPct = '#409eff';   // primary-колір Element Plus
     const HEADROOM_KEY = 'svitlo_chart_headroom_v1';
     const headroom = ref(readFlag(HEADROOM_KEY, true));   // запас +30% зверху шкали кількості
     watch([showLines, showPct, headroom], () => {
@@ -196,6 +193,9 @@ createApp({
       if(chart){ chart.destroy(); chart = null; }   // осі змінюються — простіше перестворити діаграму
       nextTick(drawChart);
     });
+    // темна тема Element Plus вмикається класом html.dark — лише на вкладці «Історія» (карта лишається світлою)
+    watch([dark, tab], () => document.documentElement.classList.toggle('dark', dark.value && tab.value === 'history'),
+      { immediate: true });
     const history = ref(loadHistory());
     const last = computed(() => history.value.length ? history.value[history.value.length - 1] : null);
     const historyMeta = computed(() => history.value.length
@@ -208,7 +208,6 @@ createApp({
       saveHistory(history.value);
     }
     function clearHistory(){
-      if(!confirm('Видалити всю збережену історію?')) return;
       history.value = []; saveHistory([]);
     }
 
@@ -459,7 +458,7 @@ createApp({
 
     return { loading, error, updatedAt, load, tab, history, last, historyMeta, colorOn, colorOff, clearHistory, dark, showLines, showPct, headroom };
   }
-}).mount('#app');
+}).use(ElementPlus, { locale: ElementPlusLocaleUk }).mount('#app');
 </script>
 </body>
 </html>
