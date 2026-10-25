@@ -93,6 +93,7 @@
         <el-check-tag :checked="showLines" @change="v => showLines = v">2 лінії</el-check-tag>
         <el-check-tag :checked="showPct" @change="v => showPct = v">% зі світлом</el-check-tag>
         <el-check-tag :checked="headroom" @change="v => headroom = v">+30% зверху</el-check-tag>
+        <el-check-tag :checked="allLabels" @change="v => allLabels = v">Усі підписи</el-check-tag>
         <el-button @click="dark = !dark">{{ dark ? '☀ Світла тема' : '🌙 Темна тема' }}</el-button>
         <el-popconfirm :width="240" title="Видалити всю збережену історію?" confirm-button-text="Видалити" cancel-button-text="Скасувати"
           confirm-button-type="danger" @confirm="clearHistory">
@@ -184,6 +185,12 @@ createApp({
     const LINES_KEY = 'svitlo_chart_lines_v1', PCT_KEY = 'svitlo_chart_pct_v1';
     const readFlag = (k, def) => { try { const v = localStorage.getItem(k); return v === null ? def : v === '1'; } catch(e){ return def; } };
     const showLines = ref(readFlag(LINES_KEY, true)), showPct = ref(readFlag(PCT_KEY, false));
+    const LABELS_KEY = 'svitlo_chart_labels_v1';
+    const allLabels = ref(readFlag(LABELS_KEY, true));   // підписи біля всіх точок (інакше розріджені)
+    watch(allLabels, v => {
+      try { localStorage.setItem(LABELS_KEY, v ? '1' : '0'); } catch(e){}
+      if(chart) chart.draw();
+    });
     const colorPct = '#409eff';   // primary-колір Element Plus
     const HEADROOM_KEY = 'svitlo_chart_headroom_v1';
     const headroom = ref(readFlag(HEADROOM_KEY, true));   // запас +30% зверху шкали кількості
@@ -228,9 +235,11 @@ createApp({
           let lastX = -Infinity, lastV = null;
           meta.data.forEach((pt, j) => {
             const v = ds.data[j];
-            if(v == null || v === lastV) return;
+            if(v == null) return;
             const t = String(v) + (ds.suffix || '');
-            if(pt.x - lastX < ctx.measureText(t).width + 14) return;
+            if(!allLabels.value){   // розріджений режим: лише зміни значення й лише де є місце
+              if(v === lastV || pt.x - lastX < ctx.measureText(t).width + 14) return;
+            }
             lastX = pt.x; lastV = v;
             ctx.lineWidth = 3; ctx.strokeStyle = dark.value ? 'rgba(20,23,28,.9)' : 'rgba(255,255,255,.9)';   // «гало» під колір теми
             ctx.strokeText(t, pt.x, pt.y - 7);
@@ -456,7 +465,7 @@ createApp({
       if(chart){ chart.destroy(); chart = null; }
     });
 
-    return { loading, error, updatedAt, load, tab, history, last, historyMeta, colorOn, colorOff, clearHistory, dark, showLines, showPct, headroom };
+    return { loading, error, updatedAt, load, tab, history, last, historyMeta, colorOn, colorOff, clearHistory, dark, showLines, showPct, headroom, allLabels };
   }
 }).use(ElementPlus, { locale: ElementPlusLocaleUk }).mount('#app');
 </script>
