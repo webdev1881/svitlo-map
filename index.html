@@ -86,10 +86,15 @@
 
   <div class="history" v-show="tab === 'history'">
     <div class="h-head">
-      <el-card class="h-stat" shadow="never"><el-statistic group-separator=" " title="Світло є" :value="last ? last[1] : '—'" :value-style="{ color: colorOn }"></el-statistic></el-card>
-      <el-card class="h-stat" shadow="never"><el-statistic group-separator=" " title="Світла немає" :value="last ? last[2] : '—'" :value-style="{ color: colorOff }"></el-statistic></el-card>
+      <el-card class="h-stat" shadow="never"><el-statistic group-separator=" " title="Світло є" :value="curOn" :value-style="{ color: colorOn }"></el-statistic></el-card>
+      <el-card class="h-stat" shadow="never"><el-statistic group-separator=" " title="Світла немає" :value="curOff" :value-style="{ color: colorOff }"></el-statistic></el-card>
       <div class="h-meta">{{ historyMeta }}</div>
       <div class="h-ctl">
+        <el-radio-group v-model="range">
+          <el-radio-button value="day">За добу</el-radio-button>
+          <el-radio-button value="week">За сім днів</el-radio-button>
+          <el-radio-button value="month">За місяць</el-radio-button>
+        </el-radio-group>
         <el-check-tag :checked="showLines" @change="v => showLines = v">2 лінії</el-check-tag>
         <el-check-tag :checked="showPct" @change="v => showPct = v">% зі світлом</el-check-tag>
         <el-check-tag :checked="headroom" @change="v => headroom = v">+30% зверху</el-check-tag>
@@ -102,7 +107,7 @@
       <div class="h-chart"><canvas id="histChart"></canvas></div>
     </el-card>
     <el-text type="info" size="small">Точку раз на хвилину записує сервер (Cloudflare Worker) у Firebase, тому історія безперервна і спільна для всіх відвідувачів,
-      навіть коли сторінка закрита.</el-text>
+      навіть коли сторінка закрита. За сім днів і місяць показано середнє за годину; старі дані видаляються автоматично.</el-text>
   </div>
 </div>
 
@@ -118,7 +123,10 @@ const { createApp, ref, computed, watch, nextTick, onMounted, onBeforeUnmount } 
 // Історія оновлень лежить у Firebase Realtime Database (REST): history/{хвилина в мс} = { on, off }.
 // Пише її лише збирач (Cloudflare Worker з cron раз на хвилину, папка worker/); сторінка тільки читає.
 const DB = 'https://svitlo-ac9a6-default-rtdb.europe-west1.firebasedatabase.app';
-const HISTORY_MAX = 10000, LEGACY_KEY = 'svitlo_history_v1';   // LEGACY_KEY — стара історія в localStorage, більше не використовується
+const LEGACY_KEY = 'svitlo_history_v1';   // стара історія в localStorage, більше не використовується
+const DAY = 86400000;
+// діапазони графіка: за добу — хвилинні точки (history/), за 7 днів і місяць — годинні середні (hourly/, їх рахує збирач)
+const RANGES = { day: { path: 'history', span: DAY }, week: { path: 'hourly', span: 7 * DAY }, month: { path: 'hourly', span: 30 * DAY } };
 const enc = encodeURIComponent;
 async function dbFetch(path, opts){
   const res = await fetch(DB + path, opts);
@@ -126,6 +134,73 @@ async function dbFetch(path, opts){
   return res.json();
 }
 const rowsOf = o => Object.entries(o || {}).map(([k, v]) => [+k, v.on, v.off]);
+const TZ = 'Europe/Kyiv';
+const fmtHM = ms => new Date(ms).toLocaleTimeString('uk-UA', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+const fmtDM = ms => new Date(ms).toLocaleDateString('uk-UA', { timeZone: TZ, day: '2-digit', month: '2-digit' });
+const fmtWhen = ms => (fmtDM(ms) === fmtDM(Date.now()) ? '' : fmtDM(ms) + ' ') + fmtHM(ms);   // дату додаємо, якщо подія не сьогодні
+function fmtDur(ms){
+  const m = Math.max(0, Math.floor(ms / 60000)), d = Math.floor(m / 1440), h = Math.floor(m % 1440 / 60);
+  return (d ? d + 'д ' : '') + (h || d ? h + 'год ' : '') + (m % 60) + 'хв';
+}
+const chKey = s => s.replace(/[.$#\[\]\/]/g, '_');   // так само, як у збирачі: ключі Firebase не містять . $ # [ ] /
+const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// Графік планових відключень ДТЕК (збирач кладе його в schedule/): день -> група ("43_1") -> 24 символи, по одному на годину
+// (y світло, n немає, f немає в першій половині години, s у другій, m можливе — вважаємо, що світло є)
+let sched = null, schedAt = 0;
+async function loadSchedule(){
+  if(Date.now() - schedAt < 10 * 60000) return;
+  schedAt = Date.now();
+  try { sched = await dbFetch('/schedule.json'); } catch(e){ schedAt = 0; }
+}
+function plannedLine(group, now){
+  const m = /^Група (\d+\.\d+)$/.exec(group || '');   // лише Київ; «Київська обл. — група 2.1» та інші пропускаємо
+  if(!m || !sched || !sched.days) return '';
+  const g = m[1].replace('.', '_'), iv = [];
+  Object.keys(sched.days).map(Number).sort((a, b) => a - b).forEach(d => {
+    const row = sched.days[d][g];
+    if(!row) return;
+    for(let h = 0; h < 24; h++){
+      [row[h] === 'n' || row[h] === 'f', row[h] === 'n' || row[h] === 's'].forEach((off, half) => {
+        if(!off) return;
+        const st = d * 1000 + (h * 2 + half) * 1800000, last = iv[iv.length - 1];
+        if(last && last[1] === st) last[1] = st + 1800000; else iv.push([st, st + 1800000]);   // суміжні півгодини зливаємо в один проміжок
+      });
+    }
+  });
+  const cur = iv.find(i => i[1] > now);
+  if(!cur) return '🗓️ Планових відключень більше немає';
+  const end = fmtHM(cur[1]);
+  return '🗓️ ' + (cur[0] > now ? 'Наступне планове' : 'Планове відключення') + ': ' +
+    (fmtDM(cur[0]) === fmtDM(now) ? '' : fmtDM(cur[0]) + ' ') + fmtHM(cur[0]) + ' - ' + (end === '00:00' ? '24:00' : end);
+}
+
+// Тривалість попереднього відключення збирач пише в dur/{канал} = { on: мс увімкнення, d: мс }; читаємо лише при наведенні
+const durCache = new Map(), durAsked = new Map();
+async function ensureDur(id){
+  const at = durAsked.get(id);
+  if(at && Date.now() - at < 5 * 60000) return false;
+  durAsked.set(id, Date.now());
+  try { const d = await dbFetch('/dur/' + enc(id) + '.json'); if(d) durCache.set(id, d); return !!d; } catch(e){ return false; }
+}
+// p = [lat, lon, назва, час зміни статусу (ISO), id каналу, група], st — статус ('1' світло є, '2' немає)
+function tipHtml(p, st, now = Date.now()){
+  const t = Date.parse(p[3]);
+  let s = '<b>' + esc(p[2]) + '</b>';
+  if(!isNaN(t)){
+    if(st === '1'){
+      // для зелених старших за добу API віддає «рівно добу тому» — точного часу немає
+      if(now - t >= (24 * 60 - 10) * 60000) s += '<br>Світло є';
+      else {
+        const d = durCache.get(p[4]);
+        s += '<br>' + fmtWhen(t) + ' Світло з\'явилося<br>🕓 ' +
+          (d && d.on === t ? 'Його не було ' + fmtDur(d.d) : 'Світло є вже ' + fmtDur(now - t));
+      }
+    } else s += '<br>' + fmtWhen(t) + ' Світло зникло<br>🕓 Світла немає вже ' + fmtDur(now - t);
+  }
+  const pl = plannedLine(p[5], now);
+  return s + (pl ? '<br>' + pl : '');
+}
 const fmtTime = ts => new Date(ts).toLocaleString('uk-UA',
   { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
@@ -136,9 +211,8 @@ const API = 'https://api.svitlobot.in.ua/website/getChannelsForMap';
 // Поле 8 — імовірно тип іконки, не статус.
 const STATUSES = {
   '1': { color: '#3cb44b', label: 'Світло є' },
-  '2': { color: '#e6194b', label: 'Світла немає' },
-  '3': { color: '#9e9e9e', label: 'Немає даних' }
-};
+  '2': { color: '#e6194b', label: 'Світла немає' }
+};   // статус 3 («немає даних») на карту не виводимо
 
 // Рядок: -1;&&&;тип;&&&;дата;&&&;назва;&&&;id;&&&;N;&&&;lat;&&&;lon;&&&;статус;&&&;-;&&&;1;&&&;
 function parse(text){
@@ -148,9 +222,11 @@ function parse(text){
     if(f.length < 9) return;
     const lat = parseFloat(f[6]), lon = parseFloat(f[7]);
     if(isNaN(lat) || isNaN(lon)) return;
-    const st = STATUSES[f[1]] || { color: '#888888', label: 'Статус ' + f[1] };
+    const st = STATUSES[f[1]];
+    if(!st) return;
     const l = layers[f[1]] || (layers[f[1]] = { color: st.color, label: st.label, points: [] });
-    l.points.push([+lat.toFixed(5), +lon.toFixed(5), f[3] + ' (' + f[2].slice(0,16).replace('T',' ') + ')']);
+    // [lat, lon, назва, час зміни статусу, id каналу, група (поле 9)]
+    l.points.push([+lat.toFixed(5), +lon.toFixed(5), f[3], f[2], chKey(f[4]), f[9]]);
   });
   return layers;
 }
@@ -204,27 +280,44 @@ createApp({
     const history = ref([]);          // [[timestamp, «Світло є», «Світла немає»], ...] за зростанням часу
     const historyLoaded = ref(false), dbError = ref('');
     const points = new Map();
+    const counts = ref(null);         // поточні кількості з останнього завантаження карти (для карток зверху)
+    const RANGE_KEY = 'svitlo_chart_range_v1';
+    const readRange = () => { try { const v = localStorage.getItem(RANGE_KEY); return RANGES[v] ? v : 'day'; } catch(e){ return 'day'; } };
+    const range = ref(readRange());
     const last = computed(() => history.value.length ? history.value[history.value.length - 1] : null);
+    const curOn = computed(() => counts.value ? counts.value.on : last.value ? last.value[1] : '—');
+    const curOff = computed(() => counts.value ? counts.value.off : last.value ? last.value[2] : '—');
     const historyMeta = computed(() => (history.value.length
-      ? 'Записів: ' + history.value.length + ' · з ' + fmtTime(history.value[0][0])
+      ? 'Записів: ' + history.value.length + ' · з ' + fmtTime(history.value[0][0]) + (RANGES[range.value].path === 'hourly' ? ' · середнє за годину' : '')
       : 'Поки що немає записів') + (dbError.value ? ' · помилка Firebase: ' + dbError.value : ''));
     const colorOn = STATUSES['1'].color, colorOff = STATUSES['2'].color;
 
     function mergeRows(rows){
       rows.forEach(row => points.set(row[0], row));
-      history.value = [...points.values()].sort((a, b) => a[0] - b[0]).slice(-HISTORY_MAX);
+      const from = Date.now() - RANGES[range.value].span;
+      for(const k of [...points.keys()]) if(k < from) points.delete(k);   // вікно «за добу / 7 днів / місяць» рухається разом із часом
+      history.value = [...points.values()].sort((a, b) => a[0] - b[0]);
     }
-    // перше завантаження — останні HISTORY_MAX записів, далі лише новіші за вже відомі (startAt)
+    // перше завантаження — від початку вікна, далі лише новіше за вже відоме (startAt)
+    let syncSeq = 0;
     async function syncHistory(){
+      const seq = ++syncSeq, R = RANGES[range.value];
       try {
         const lastKey = historyLoaded.value && history.value.length ? history.value[history.value.length - 1][0] : null;
-        const q = lastKey ? 'startAt=' + enc('"' + lastKey + '"') : 'limitToLast=' + HISTORY_MAX;
-        mergeRows(rowsOf(await dbFetch('/history.json?orderBy=' + enc('"$key"') + '&' + q)));
+        const from = lastKey || Date.now() - R.span;
+        const rows = rowsOf(await dbFetch('/' + R.path + '.json?orderBy=' + enc('"$key"') + '&startAt=' + enc('"' + from + '"')));
+        if(seq !== syncSeq) return;   // за цей час діапазон перемкнули — відповідь застаріла
+        mergeRows(rows);
         const first = !historyLoaded.value;
         historyLoaded.value = true; dbError.value = '';
         if(first) try { localStorage.removeItem(LEGACY_KEY); } catch(e){}
-      } catch(e){ dbError.value = e.message; }
+      } catch(e){ if(seq === syncSeq) dbError.value = e.message; }
     }
+    watch(range, v => {
+      try { localStorage.setItem(RANGE_KEY, v); } catch(e){}
+      points.clear(); history.value = []; historyLoaded.value = false;
+      syncHistory();
+    });
     // діаграма — не реактивна (Chart.js керує своїм canvas)
     let chart = null;
     // Підписи значень над точками. Щоб не злипались при сотнях точок: підписуємо першу точку та ті, де значення
@@ -311,8 +404,8 @@ createApp({
 
     // Стан Leaflet — не реактивний (Leaflet сам керує своїм DOM)
     let map = null, layerGroups = [], layersCtrl = null, selallCtrl = null;
-    // шари, вимкнені користувачем — зберігаються між оновленнями; «Немає даних» ('3') вимкнено за замовчуванням
-    const hiddenKeys = new Set(['3']);
+    // шари, вимкнені користувачем — зберігаються між оновленнями
+    const hiddenKeys = new Set();
 
     // на вузькому екрані (телефон) точки й кластери менші — інакше закривають карту
     const isNarrow = () => window.matchMedia('(max-width:600px)').matches;
@@ -377,22 +470,25 @@ createApp({
             const m = L.circleMarker([p[0], p[1]], {
               radius: radiusFor(map.getZoom()), color: '#fff', weight: 2, fillColor: l.color, fillOpacity: pointOpacity(radiusFor(map.getZoom()))   // біла обвідка; заливка прозоріша на великих кругах
             });
-            m._tip = p[2];   // підказка створюється лише при наведенні, а не для кожної точки одразу
+            m._p = p; m._st = key;   // підказка створюється лише при наведенні, а не для кожної точки одразу
             allMarkers.push(m);
             return m;
           }));
           // mouseover — для миші, click — для touch (там наведення немає)
           const showTip = e => {
-            if(!e.layer._tip) return;
-            if(!e.layer.getTooltip()) e.layer.bindTooltip(e.layer._tip).openTooltip();
-            else e.layer.openTooltip();
-            e.layer.setStyle({ color: '#222', weight: 3 });   // підсвітка при наведенні/тапі
-            e.layer.bringToFront();
+            const m = e.layer;
+            if(!m._p) return;
+            const html = tipHtml(m._p, m._st);
+            if(!m.getTooltip()) m.bindTooltip(html); else m.setTooltipContent(html);
+            m.openTooltip();
+            if(m._st === '1') ensureDur(m._p[4]).then(ok => { if(ok && m.isTooltipOpen()) m.setTooltipContent(tipHtml(m._p, m._st)); });
+            m.setStyle({ color: '#222', weight: 3 });   // підсвітка при наведенні/тапі
+            m.bringToFront();
           };
           lg.on('mouseover', showTip);
           lg.on('click', showTip);
           lg.on('mouseout', e => {
-            if(e.layer._tip) e.layer.setStyle({ color: '#fff', weight: 2 });
+            if(e.layer._p) e.layer.setStyle({ color: '#fff', weight: 2 });
           });
           lg._key = key;
           if(!hiddenKeys.has(key)) lg.addTo(map);
@@ -433,8 +529,10 @@ createApp({
           lastText = text;
           const layers = parse(text);
           renderLayers(layers);
+          counts.value = { on: layers['1'] ? layers['1'].points.length : 0, off: layers['2'] ? layers['2'].points.length : 0 };
         }
         syncHistory();   // підтягнути нові точки, які збирач записав у Firebase
+        loadSchedule();  // графік ДТЕК для підказок (не частіше ніж раз на 10 хв)
         lastLoadAt = Date.now();
         updatedAt.value = new Date().toLocaleTimeString('uk-UA');
       } catch(e){
@@ -468,7 +566,7 @@ createApp({
       if(chart){ chart.destroy(); chart = null; }
     });
 
-    return { loading, error, updatedAt, load, tab, history, last, historyMeta, historyLoaded, colorOn, colorOff, dark, showLines, showPct, headroom, allLabels };
+    return { loading, error, updatedAt, load, tab, history, last, historyMeta, historyLoaded, curOn, curOff, range, colorOn, colorOff, dark, showLines, showPct, headroom, allLabels };
   }
 }).use(ElementPlus, { locale: ElementPlusLocaleUk }).mount('#app');
 </script>
