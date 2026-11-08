@@ -253,7 +253,7 @@ function parse(text){
 // PWA: service worker (оболонка сторінки офлайн)
 if('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
 
-// Лічильник відвідувачів: анонімний ідентифікатор браузера + країна/місто (їх визначає сервер). IP не зберігається.
+// Лічильник відвідувачів: ідентифікатор браузера; IP, країну й місто визначає сервер.
 // Надсилаємо не частіше, ніж раз на 30 хвилин; статистика доступна лише власнику (admin.html, за паролем).
 (function(){
   try {

@@ -66,6 +66,7 @@
         <el-table-column label="Останній візит" width="130"><template #default="{ row }">{{ when(row.last) }}</template></el-table-column>
         <el-table-column label="Перший візит" width="130"><template #default="{ row }">{{ when(row.first) }}</template></el-table-column>
         <el-table-column prop="n" label="Візитів" width="70"></el-table-column>
+        <el-table-column label="IP" min-width="150"><template #default="{ row }"><span :title="(row.ips || []).join(', ')">{{ row.ip || '—' }}</span><el-text v-if="(row.ips || []).length > 1" type="info" size="small"> +{{ row.ips.length - 1 }}</el-text></template></el-table-column>
         <el-table-column label="Місце" min-width="150"><template #default="{ row }">{{ place(row) }}</template></el-table-column>
         <el-table-column label="Пристрій" min-width="170"><template #default="{ row }">{{ row.device }}, {{ row.os }}, {{ row.browser }}</template></el-table-column>
         <el-table-column prop="scr" label="Екран" width="90"></el-table-column>
