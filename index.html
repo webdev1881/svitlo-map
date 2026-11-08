@@ -95,18 +95,14 @@
         <el-check-tag :checked="headroom" @change="v => headroom = v">+30% зверху</el-check-tag>
         <el-check-tag :checked="allLabels" @change="v => allLabels = v">Усі підписи</el-check-tag>
         <el-button @click="dark = !dark">{{ dark ? '☀ Світла тема' : '🌙 Темна тема' }}</el-button>
-        <el-popconfirm :width="240" title="Видалити всю збережену історію?" confirm-button-text="Видалити" cancel-button-text="Скасувати"
-          confirm-button-type="danger" @confirm="clearHistory">
-          <template #reference><el-button type="danger" plain :disabled="!history.length">Очистити історію</el-button></template>
-        </el-popconfirm>
       </div>
     </div>
     <el-card class="h-chart-card" shadow="never">
-      <el-empty v-if="!history.length" class="h-empty" description="Поки що немає записів"></el-empty>
+      <el-empty v-if="!history.length" class="h-empty" :description="historyLoaded ? 'Поки що немає записів' : 'Завантаження історії…'"></el-empty>
       <div class="h-chart"><canvas id="histChart"></canvas></div>
     </el-card>
-    <el-text type="info" size="small">Кожне успішне оновлення (раз на хвилину) додає точку. Історія зберігається в цьому браузері
-      і накопичується лише поки сторінка відкрита.</el-text>
+    <el-text type="info" size="small">Кожне успішне оновлення (раз на хвилину) додає точку. Історія зберігається в Firebase і спільна для всіх відвідувачів;
+      нові точки з'являються, лише поки хтось тримає сторінку відкритою.</el-text>
   </div>
 </div>
 
@@ -119,15 +115,18 @@
 <script>
 const { createApp, ref, computed, watch, nextTick, onMounted, onBeforeUnmount } = Vue;
 
-// Історія оновлень: масив точок [timestamp, «Світло є», «Світла немає»] у localStorage цього браузера
-const HISTORY_KEY = 'svitlo_history_v1', HISTORY_MAX = 10000;
-function loadHistory(){
-  try { const a = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); return Array.isArray(a) ? a : []; }
-  catch(e){ return []; }
+// Історія оновлень зберігається в Firebase Realtime Database (REST): history/{хвилина в мс} = { on, off }.
+// Ключ = початок хвилини, тому кілька відкритих сторінок пишуть у той самий запис і дублів не буде.
+const DB = 'https://svitlo-ac9a6-default-rtdb.europe-west1.firebasedatabase.app';
+const HISTORY_MAX = 10000, LEGACY_KEY = 'svitlo_history_v1';   // LEGACY_KEY — стара історія з localStorage (одноразова міграція)
+const minuteKey = ts => Math.floor(ts / 60000) * 60000;
+const enc = encodeURIComponent;
+async function dbFetch(path, opts){
+  const res = await fetch(DB + path, opts);
+  if(!res.ok) throw new Error('Firebase ' + res.status);
+  return res.json();
 }
-function saveHistory(a){
-  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(a)); } catch(e){ /* приватний режим / переповнення */ }
-}
+const rowsOf = o => Object.entries(o || {}).map(([k, v]) => [+k, v.on, v.off]);
 const fmtTime = ts => new Date(ts).toLocaleString('uk-UA',
   { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
@@ -203,19 +202,50 @@ createApp({
     // темна тема Element Plus вмикається класом html.dark — лише на вкладці «Історія» (карта лишається світлою)
     watch([dark, tab], () => document.documentElement.classList.toggle('dark', dark.value && tab.value === 'history'),
       { immediate: true });
-    const history = ref(loadHistory());
+    const history = ref([]);          // [[timestamp, «Світло є», «Світла немає»], ...] за зростанням часу
+    const historyLoaded = ref(false), dbError = ref('');
+    const points = new Map();
     const last = computed(() => history.value.length ? history.value[history.value.length - 1] : null);
-    const historyMeta = computed(() => history.value.length
+    const historyMeta = computed(() => (history.value.length
       ? 'Записів: ' + history.value.length + ' · з ' + fmtTime(history.value[0][0])
-      : 'Поки що немає записів');
+      : 'Поки що немає записів') + (dbError.value ? ' · помилка Firebase: ' + dbError.value : ''));
     const colorOn = STATUSES['1'].color, colorOff = STATUSES['2'].color;
 
-    function addHistory(counts){
-      history.value = history.value.concat([[Date.now(), counts.on, counts.off]]).slice(-HISTORY_MAX);
-      saveHistory(history.value);
+    function mergeRows(rows){
+      rows.forEach(row => points.set(row[0], row));
+      history.value = [...points.values()].sort((a, b) => a[0] - b[0]).slice(-HISTORY_MAX);
     }
-    function clearHistory(){
-      history.value = []; saveHistory([]);
+    // перше завантаження — останні HISTORY_MAX записів, далі лише новіші за вже відомі (startAt)
+    async function syncHistory(){
+      try {
+        const lastKey = historyLoaded.value && history.value.length ? history.value[history.value.length - 1][0] : null;
+        const q = lastKey ? 'startAt=' + enc('"' + lastKey + '"') : 'limitToLast=' + HISTORY_MAX;
+        mergeRows(rowsOf(await dbFetch('/history.json?orderBy=' + enc('"$key"') + '&' + q)));
+        const first = !historyLoaded.value;
+        historyLoaded.value = true; dbError.value = '';
+        if(first) migrateLegacy();
+      } catch(e){ dbError.value = e.message; }
+    }
+    // стара історія з localStorage одноразово переноситься в Firebase, після чого видаляється з браузера
+    async function migrateLegacy(){
+      try {
+        const old = JSON.parse(localStorage.getItem(LEGACY_KEY) || 'null');
+        if(!Array.isArray(old)) return;
+        const batch = {};
+        old.forEach(p => { const k = minuteKey(p[0]); if(!points.has(k)) batch[k] = { on: p[1], off: p[2] }; });
+        if(Object.keys(batch).length) await dbFetch('/history.json', { method: 'PATCH', body: JSON.stringify(batch) });
+        mergeRows(rowsOf(batch));
+        localStorage.removeItem(LEGACY_KEY);
+      } catch(e){ /* залишаємо в localStorage, спробуємо при наступному відкритті */ }
+    }
+    async function addHistory(counts){
+      const ts = minuteKey(Date.now());
+      mergeRows([[ts, counts.on, counts.off]]);
+      try {
+        await dbFetch('/history/' + ts + '.json', { method: 'PUT', body: JSON.stringify({ on: counts.on, off: counts.off }) });
+        dbError.value = '';
+      } catch(e){ dbError.value = e.message; }
+      syncHistory();   // підтягнути записи, які зберегли інші відкриті сторінки
     }
 
     // діаграма — не реактивна (Chart.js керує своїм canvas)
@@ -453,7 +483,7 @@ createApp({
     }
 
     onMounted(() => {
-      initMap(); load();
+      initMap(); syncHistory().then(load);   // спершу історія, потім перше оновлення даних
       if(tab.value === 'history') nextTick(drawChart);   // сторінку відкрито одразу на історії
       timer = setInterval(tick, REFRESH_MS);
       document.addEventListener('visibilitychange', onVisible);
@@ -465,7 +495,7 @@ createApp({
       if(chart){ chart.destroy(); chart = null; }
     });
 
-    return { loading, error, updatedAt, load, tab, history, last, historyMeta, colorOn, colorOff, clearHistory, dark, showLines, showPct, headroom, allLabels };
+    return { loading, error, updatedAt, load, tab, history, last, historyMeta, historyLoaded, colorOn, colorOff, dark, showLines, showPct, headroom, allLabels };
   }
 }).use(ElementPlus, { locale: ElementPlusLocaleUk }).mount('#app');
 </script>
