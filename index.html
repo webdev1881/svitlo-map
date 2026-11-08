@@ -101,8 +101,8 @@
       <el-empty v-if="!history.length" class="h-empty" :description="historyLoaded ? 'Поки що немає записів' : 'Завантаження історії…'"></el-empty>
       <div class="h-chart"><canvas id="histChart"></canvas></div>
     </el-card>
-    <el-text type="info" size="small">Кожне успішне оновлення (раз на хвилину) додає точку. Історія зберігається в Firebase і спільна для всіх відвідувачів;
-      нові точки з'являються, лише поки хтось тримає сторінку відкритою.</el-text>
+    <el-text type="info" size="small">Точку раз на хвилину записує сервер (Cloudflare Worker) у Firebase, тому історія безперервна і спільна для всіх відвідувачів,
+      навіть коли сторінка закрита.</el-text>
   </div>
 </div>
 
@@ -115,11 +115,10 @@
 <script>
 const { createApp, ref, computed, watch, nextTick, onMounted, onBeforeUnmount } = Vue;
 
-// Історія оновлень зберігається в Firebase Realtime Database (REST): history/{хвилина в мс} = { on, off }.
-// Ключ = початок хвилини, тому кілька відкритих сторінок пишуть у той самий запис і дублів не буде.
+// Історія оновлень лежить у Firebase Realtime Database (REST): history/{хвилина в мс} = { on, off }.
+// Пише її лише збирач (Cloudflare Worker з cron раз на хвилину, папка worker/); сторінка тільки читає.
 const DB = 'https://svitlo-ac9a6-default-rtdb.europe-west1.firebasedatabase.app';
-const HISTORY_MAX = 10000, LEGACY_KEY = 'svitlo_history_v1';   // LEGACY_KEY — стара історія з localStorage (одноразова міграція)
-const minuteKey = ts => Math.floor(ts / 60000) * 60000;
+const HISTORY_MAX = 10000, LEGACY_KEY = 'svitlo_history_v1';   // LEGACY_KEY — стара історія в localStorage, більше не використовується
 const enc = encodeURIComponent;
 async function dbFetch(path, opts){
   const res = await fetch(DB + path, opts);
@@ -161,7 +160,7 @@ createApp({
     const loading = ref(true);
     const error = ref('');
     const updatedAt = ref('');
-    let lastLoadAt = 0, lastText = '', lastCounts = { on: 0, off: 0 };
+    let lastLoadAt = 0, lastText = '';
 
     // активна вкладка запам'ятовується між оновленнями сторінки (localStorage, з try/catch)
     const TAB_KEY = 'svitlo_tab_v1';
@@ -223,31 +222,9 @@ createApp({
         mergeRows(rowsOf(await dbFetch('/history.json?orderBy=' + enc('"$key"') + '&' + q)));
         const first = !historyLoaded.value;
         historyLoaded.value = true; dbError.value = '';
-        if(first) migrateLegacy();
+        if(first) try { localStorage.removeItem(LEGACY_KEY); } catch(e){}
       } catch(e){ dbError.value = e.message; }
     }
-    // стара історія з localStorage одноразово переноситься в Firebase, після чого видаляється з браузера
-    async function migrateLegacy(){
-      try {
-        const old = JSON.parse(localStorage.getItem(LEGACY_KEY) || 'null');
-        if(!Array.isArray(old)) return;
-        const batch = {};
-        old.forEach(p => { const k = minuteKey(p[0]); if(!points.has(k)) batch[k] = { on: p[1], off: p[2] }; });
-        if(Object.keys(batch).length) await dbFetch('/history.json', { method: 'PATCH', body: JSON.stringify(batch) });
-        mergeRows(rowsOf(batch));
-        localStorage.removeItem(LEGACY_KEY);
-      } catch(e){ /* залишаємо в localStorage, спробуємо при наступному відкритті */ }
-    }
-    async function addHistory(counts){
-      const ts = minuteKey(Date.now());
-      mergeRows([[ts, counts.on, counts.off]]);
-      try {
-        await dbFetch('/history/' + ts + '.json', { method: 'PUT', body: JSON.stringify({ on: counts.on, off: counts.off }) });
-        dbError.value = '';
-      } catch(e){ dbError.value = e.message; }
-      syncHistory();   // підтягнути записи, які зберегли інші відкриті сторінки
-    }
-
     // діаграма — не реактивна (Chart.js керує своїм canvas)
     let chart = null;
     // Підписи значень над точками. Щоб не злипались при сотнях точок: підписуємо першу точку та ті, де значення
@@ -456,12 +433,8 @@ createApp({
           lastText = text;
           const layers = parse(text);
           renderLayers(layers);
-          lastCounts = {
-            on: layers['1'] ? layers['1'].points.length : 0,
-            off: layers['2'] ? layers['2'].points.length : 0
-          };
         }
-        addHistory(lastCounts);   // кожне успішне оновлення = нова точка історії (час збігається з «Оновлено»)
+        syncHistory();   // підтягнути нові точки, які збирач записав у Firebase
         lastLoadAt = Date.now();
         updatedAt.value = new Date().toLocaleTimeString('uk-UA');
       } catch(e){
