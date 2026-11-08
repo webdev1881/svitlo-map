@@ -170,9 +170,11 @@ function plannedLine(group, now){
   });
   const cur = iv.find(i => i[1] > now);
   if(!cur) return '🗓️ Планових відключень більше немає';
-  const end = fmtHM(cur[1]);
-  return '🗓️ ' + (cur[0] > now ? 'Наступне планове' : 'Планове відключення') + ': ' +
-    (fmtDM(cur[0]) === fmtDM(now) ? '' : fmtDM(cur[0]) + ' ') + fmtHM(cur[0]) + ' - ' + (end === '00:00' ? '24:00' : end);
+  const end = fmtHM(cur[1]), at = ms => (fmtDM(ms) === fmtDM(now) ? '' : fmtDM(ms) + ' ') + fmtHM(ms);
+  const active = cur[0] <= now;
+  return '🗓️ ' + (active ? 'Планове відключення' : 'Наступне планове') + ': ' + at(cur[0]) + ' - ' + (end === '00:00' ? '24:00' : end) +
+    '<br>' + (active ? '💡 Світло дадуть через ' + fmtDur(cur[1] - now) + ' (о ' + (end === '00:00' ? '24:00' : at(cur[1])) + ')'
+                     : '🔌 Наступне вимкнення через ' + fmtDur(cur[0] - now) + ' (о ' + at(cur[0]) + ')');
 }
 
 // Тривалість попереднього відключення збирач пише в dur/{канал} = { on: мс увімкнення, d: мс }; читаємо лише при наведенні
