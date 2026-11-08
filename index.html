@@ -426,7 +426,16 @@ createApp({
     };
 
     function initMap(){
-      map = L.map('mymap', { preferCanvas: true }).setView([49.0, 31.5], 6);
+      let view = [49.0, 31.5, 6];   // положення й масштаб карти запам'ятовуються між оновленнями сторінки
+      try {
+        const v = JSON.parse(localStorage.getItem('svitlo_map_view_v1'));
+        if(Array.isArray(v) && v.length === 3 && v.every(Number.isFinite) && Math.abs(v[0]) <= 90 && Math.abs(v[1]) <= 180) view = v;
+      } catch(e){}
+      map = L.map('mymap', { preferCanvas: true }).setView([view[0], view[1]], view[2]);
+      map.on('moveend', () => {
+        const c = map.getCenter();
+        try { localStorage.setItem('svitlo_map_view_v1', JSON.stringify([+c.lat.toFixed(5), +c.lng.toFixed(5), map.getZoom()])); } catch(e){}
+      });
       map.on('zoomend', () => {
         const r = radiusFor(map.getZoom());
         const fo = pointOpacity(r);
