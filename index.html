@@ -18,11 +18,10 @@
   html,body{margin:0;height:100%;font-family:system-ui,sans-serif}
   #app{height:100%;position:relative}
   #mymap{height:100vh;height:100dvh}   /* dvh — враховує адресний рядок мобільного браузера */
-  .map-selall{display:flex;width:100%;box-sizing:border-box;overflow:hidden}
-  .map-selall a{flex:1;text-align:center;padding:2px 7px;font-size:11px;line-height:18px;
-    font-weight:600;color:#409eff;text-decoration:none;background:#fff}
-  .map-selall a:first-child{border-right:1px solid #ccc}
-  .map-selall a:hover{background:#f2f6ff}
+  .map-donut{background:#fff;border-radius:4px;box-shadow:0 1px 5px rgba(0,0,0,.4);padding:6px 8px;text-align:center;
+    font-size:11px;color:#555;line-height:1.3}
+  .map-donut svg{display:block;margin:0 auto 2px}
+  .map-donut b{font-size:13px;color:#222}
   .map-msg{position:absolute;left:50%;top:12px;transform:translateX(-50%);z-index:1000;
     background:#fff;border-radius:4px;box-shadow:0 1px 5px rgba(0,0,0,.4);padding:6px 12px;font-size:13px}
   .map-alert{position:absolute;left:50%;top:12px;transform:translateX(-50%);z-index:1000;width:auto;max-width:90vw}
@@ -30,7 +29,6 @@
     background:#fff;border-radius:4px;box-shadow:0 1px 5px rgba(0,0,0,.4);padding:4px 8px;font-size:12px;color:#555}
   /* touch-екрани: зручні цілі натискання (~44px) */
   @media (pointer:coarse){
-    .map-selall a{padding:8px 10px;font-size:13px;line-height:22px}
     .map-refresh{bottom:34px;padding:6px 10px;font-size:13px}
     .map-refresh .el-button{height:auto;padding:10px 14px;font-size:14px}
     .leaflet-control-layers-overlays label{display:block;padding:6px 2px;font-size:14px}
@@ -542,18 +540,23 @@ createApp({
           overlays['<span style="color:' + l.color + '">●</span> ' + l.label + ' (' + l.points.length + ')'] = lg;
         });
 
-      const allGroups = layerGroups.slice();
+      // кругова діаграма «зараз»: зелене — світло є, червоне — немає, всередині відсоток зі світлом
+      const nOn = layers['1'] ? layers['1'].points.length : 0, nOff = layers['2'] ? layers['2'].points.length : 0, total = nOn + nOff;
       if(selallCtrl) map.removeControl(selallCtrl);
       selallCtrl = L.control({ position: 'topright' });
       selallCtrl.onAdd = function(){
-        const div = L.DomUtil.create('div', 'leaflet-bar map-selall');
-        div.innerHTML = '<a href="#" data-on="1">Обрати всі</a><a href="#" data-on="0">Зняти всі</a>';
+        const R = 34, C = 2 * Math.PI * R, onLen = total ? C * nOn / total : 0;
+        const ring = (color, len, off) => '<circle cx="45" cy="45" r="' + R + '" fill="none" stroke="' + color + '" stroke-width="14"' +
+          ' stroke-dasharray="' + len.toFixed(2) + ' ' + (C - len).toFixed(2) + '" stroke-dashoffset="' + (-off).toFixed(2) + '" transform="rotate(-90 45 45)"/>';
+        const pct = total ? Math.round(nOn / total * 100) : 0;
+        const div = L.DomUtil.create('div', 'map-donut');
+        div.title = 'Світло є: ' + nOn + ', світла немає: ' + nOff;
+        div.innerHTML = '<svg width="90" height="90" viewBox="0 0 90 90">' +
+          (total ? ring(STATUSES['2'].color, C - onLen, onLen) + ring(STATUSES['1'].color, onLen, 0) : ring('#ddd', C, 0)) +
+          '<text x="45" y="49" text-anchor="middle" font-size="16" font-weight="700" fill="#222">' + (total ? pct + '%' : '—') + '</text></svg>' +
+          '<div><span style="color:' + STATUSES['1'].color + '">●</span> <b>' + nOn + '</b> зі світлом</div>' +
+          '<div><span style="color:' + STATUSES['2'].color + '">●</span> <b>' + nOff + '</b> без світла</div>';
         L.DomEvent.disableClickPropagation(div);
-        div.querySelectorAll('a').forEach(a => a.addEventListener('click', ev => {
-          ev.preventDefault();
-          const on = a.getAttribute('data-on') === '1';
-          allGroups.forEach(lg => { on ? map.addLayer(lg) : map.removeLayer(lg); });
-        }));
         return div;
       };
       selallCtrl.addTo(map);
