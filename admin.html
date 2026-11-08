@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Svitlobot — статистика</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/element-plus@2.8.1/dist/index.css"/>
+<style>
+  body{margin:0;font-family:system-ui,sans-serif;background:#f5f7fa}
+  .wrap{max-width:1100px;margin:0 auto;padding:16px}
+  .login{max-width:340px;margin:18vh auto 0}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:12px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin:12px 0}
+  .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+  h1{font-size:20px;margin:0}
+  .chart{height:220px}
+</style>
+</head>
+<body>
+<div id="app" class="wrap">
+  <el-card v-if="!data" class="login">
+    <template #header>Статистика відвідувачів</template>
+    <el-input v-model="pass" type="password" show-password placeholder="Пароль" @keyup.enter="load" autofocus></el-input>
+    <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon style="margin-top:10px"></el-alert>
+    <el-button type="primary" :loading="busy" style="width:100%;margin-top:12px" @click="load">Увійти</el-button>
+  </el-card>
+
+  <template v-else>
+    <div class="head">
+      <h1>Відвідувачі</h1>
+      <div>
+        <el-text type="info" size="small">оновлено {{ updated }}</el-text>
+        <el-button size="small" :loading="busy" @click="load" style="margin-left:8px">Оновити</el-button>
+        <el-button size="small" @click="logout">Вийти</el-button>
+      </div>
+    </div>
+
+    <div class="cards">
+      <el-card shadow="never"><el-statistic title="Зараз на сайті (5 хв)" :value="data.online"></el-statistic></el-card>
+      <el-card shadow="never"><el-statistic title="Сьогодні" :value="data.today"></el-statistic></el-card>
+      <el-card shadow="never"><el-statistic title="За 7 днів" :value="data.week"></el-statistic></el-card>
+      <el-card shadow="never"><el-statistic title="За 30 днів" :value="data.month"></el-statistic></el-card>
+      <el-card shadow="never"><el-statistic title="Усього (90 днів)" :value="data.total"></el-statistic></el-card>
+      <el-card shadow="never"><el-statistic title="Поверталися" :value="data.returning"></el-statistic></el-card>
+    </div>
+
+    <el-card shadow="never">
+      <template #header>Унікальні відвідувачі по днях</template>
+      <div class="chart"><canvas id="daysChart"></canvas></div>
+    </el-card>
+
+    <div class="grid">
+      <el-card shadow="never" v-for="t in tops" :key="t.key">
+        <template #header>{{ t.title }}</template>
+        <el-table :data="data[t.key]" size="small" :show-header="false" empty-text="Немає даних">
+          <el-table-column prop="name"></el-table-column>
+          <el-table-column prop="count" width="60" align="right"></el-table-column>
+        </el-table>
+      </el-card>
+    </div>
+
+    <el-card shadow="never">
+      <template #header>Останні відвідувачі</template>
+      <el-table :data="data.recent" size="small" max-height="520" stripe>
+        <el-table-column label="Останній візит" width="130"><template #default="{ row }">{{ when(row.last) }}</template></el-table-column>
+        <el-table-column label="Перший візит" width="130"><template #default="{ row }">{{ when(row.first) }}</template></el-table-column>
+        <el-table-column prop="n" label="Візитів" width="70"></el-table-column>
+        <el-table-column label="Місце" min-width="150"><template #default="{ row }">{{ place(row) }}</template></el-table-column>
+        <el-table-column label="Пристрій" min-width="170"><template #default="{ row }">{{ row.device }}, {{ row.os }}, {{ row.browser }}</template></el-table-column>
+        <el-table-column prop="scr" label="Екран" width="90"></el-table-column>
+        <el-table-column prop="lang" label="Мова" width="70"></el-table-column>
+        <el-table-column prop="isp" label="Провайдер" min-width="160"></el-table-column>
+        <el-table-column prop="ref" label="Звідки" min-width="120"></el-table-column>
+      </el-table>
+    </el-card>
+  </template>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.4.38/vue.global.prod.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/element-plus@2.8.1/dist/index.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/element-plus@2.8.1/dist/locale/uk.min.js"></script>
+<script>
+const { createApp, ref, nextTick, onMounted } = Vue;
+const API = 'https://svitlo-collector.tkachenko9119.workers.dev/admin/stats';
+const PASS_KEY = 'svitlo_admin_pass';   // лише в sessionStorage: зникає при закритті вкладки
+
+createApp({
+  setup(){
+    const pass = ref(''), data = ref(null), error = ref(''), busy = ref(false), updated = ref('');
+    let chart = null;
+    const tops = [
+      { key: 'countries', title: 'Країни' }, { key: 'cities', title: 'Міста' }, { key: 'devices', title: 'Пристрої' },
+      { key: 'os', title: 'Операційні системи' }, { key: 'browsers', title: 'Браузери' }, { key: 'refs', title: 'Звідки прийшли' },
+      { key: 'isps', title: 'Провайдери' }
+    ];
+    const when = ms => new Date(ms).toLocaleString('uk-UA', { timeZone: 'Europe/Kyiv', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const place = r => [r.city, r.region, r.country].filter(Boolean).join(', ') || '—';
+
+    async function load(){
+      if(!pass.value) return;
+      busy.value = true; error.value = '';
+      try {
+        const res = await fetch(API, { headers: { Authorization: 'Bearer ' + pass.value }, cache: 'no-store' });
+        const j = await res.json().catch(() => ({}));
+        if(!res.ok) throw new Error(j.error || 'Помилка ' + res.status);
+        data.value = j; updated.value = when(j.now);
+        try { sessionStorage.setItem(PASS_KEY, pass.value); } catch(e){}
+        await nextTick(); draw();
+      } catch(e){
+        error.value = e.message === 'Failed to fetch' ? 'Сервер недоступний' : e.message;
+        if(data.value === null) try { sessionStorage.removeItem(PASS_KEY); } catch(e2){}
+      } finally { busy.value = false; }
+    }
+    function draw(){
+      const el = document.getElementById('daysChart');
+      if(!el) return;
+      if(chart) chart.destroy();
+      chart = new Chart(el, {
+        type: 'bar',
+        data: { labels: data.value.days.map(d => d.day.slice(5)), datasets: [{ data: data.value.days.map(d => d.count), backgroundColor: '#409eff' }] },
+        options: { maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
+      });
+    }
+    function logout(){ try { sessionStorage.removeItem(PASS_KEY); } catch(e){} data.value = null; pass.value = ''; }
+    onMounted(() => { try { pass.value = sessionStorage.getItem(PASS_KEY) || ''; } catch(e){} if(pass.value) load(); });
+    return { pass, data, error, busy, updated, tops, when, place, load, logout };
+  }
+}).use(ElementPlus, { locale: ElementPlusLocaleUk }).mount('#app');
+</script>
+</body>
+</html>

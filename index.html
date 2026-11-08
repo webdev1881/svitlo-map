@@ -76,6 +76,7 @@
       <li><b>Карта:</b> два шари — «Світла немає» і «Світло є» з лічильниками; масштаб і положення карти запам'ятовуються.</li>
       <li><b>Історія:</b> діапазони «За добу / За сім днів / За місяць», лінія «% зі світлом», підписи точок, світла і темна теми.</li>
       <li>Історія зберігається на сервері і спільна для всіх відвідувачів.</li>
+      <li>Сайт веде анонімну статистику відвідувань (країна, місто, браузер). IP-адреси не зберігаються.</li>
     </ul>
     <template #footer><el-button type="primary" @click="showNews = false">Зрозуміло</el-button></template>
   </el-dialog>
@@ -244,6 +245,23 @@ function parse(text){
   return layers;
 }
 
+// Лічильник відвідувачів: анонімний ідентифікатор браузера + країна/місто (їх визначає сервер). IP не зберігається.
+// Надсилаємо не частіше, ніж раз на 30 хвилин; статистика доступна лише власнику (admin.html, за паролем).
+(function(){
+  try {
+    const last = +sessionStorage.getItem('svitlo_hit') || 0;
+    if(Date.now() - last < 30 * 60000) return;
+    sessionStorage.setItem('svitlo_hit', String(Date.now()));
+    let vid = localStorage.getItem('svitlo_vid');
+    if(!vid){ vid = crypto.randomUUID(); localStorage.setItem('svitlo_vid', vid); }
+    fetch('https://svitlo-collector.tkachenko9119.workers.dev/hit', {
+      method: 'POST', keepalive: true, headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ vid, ref: document.referrer, lang: navigator.language, scr: screen.width + 'x' + screen.height,
+        tz: Intl.DateTimeFormat().resolvedOptions().timeZone })
+    }).catch(() => {});
+  } catch(e){}
+})();
+
 createApp({
   setup(){
     const loading = ref(true);
@@ -252,7 +270,7 @@ createApp({
     let lastLoadAt = 0, lastText = '';
 
     // «Що нового» показуємо один раз для кожної версії (змініть NEWS_VERSION, коли є що показати)
-    const NEWS_KEY = 'svitlo_news_seen', NEWS_VERSION = '2026-11-08';
+    const NEWS_KEY = 'svitlo_news_seen', NEWS_VERSION = '2026-11-09';
     const newsSeen = () => { try { return localStorage.getItem(NEWS_KEY) === NEWS_VERSION; } catch(e){ return true; } };
     const showNews = ref(!newsSeen());
     watch(showNews, v => { if(!v) try { localStorage.setItem(NEWS_KEY, NEWS_VERSION); } catch(e){} });
