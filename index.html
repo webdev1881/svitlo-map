@@ -3,6 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1f2937">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Світло">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="/pwa/favicon-32.png">
+<link rel="apple-touch-icon" href="/pwa/apple-touch-icon.png">
 <meta name="color-scheme" content="light">  <!-- тема керується самою сторінкою; браузер не «затемнює» її автоматично -->
 <title>Svitlobot — карта</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
@@ -241,6 +249,9 @@ function parse(text){
   });
   return layers;
 }
+
+// PWA: service worker (оболонка сторінки офлайн)
+if('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
 
 // Лічильник відвідувачів: анонімний ідентифікатор браузера + країна/місто (їх визначає сервер). IP не зберігається.
 // Надсилаємо не частіше, ніж раз на 30 хвилин; статистика доступна лише власнику (admin.html, за паролем).
