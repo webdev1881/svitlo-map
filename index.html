@@ -64,10 +64,21 @@
   .history > .el-text{align-self:flex-start}
   .h-empty{position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;background:var(--el-bg-color)}
   @media (max-width:600px){ .history{padding-bottom:84px} }
+  .news{margin:0;padding-left:18px;line-height:1.5} .news li{margin-bottom:8px}
 </style>
 </head>
 <body>
 <div id="app">
+  <el-dialog v-model="showNews" title="Що нового" width="min(460px, 92vw)" align-center>
+    <ul class="news">
+      <li><b>Підказка точки:</b> коли світло зникло чи з'явилося, скільки його не було і скільки триває відключення.</li>
+      <li><b>Графік ДТЕК</b> для груп Києва: наступне планове відключення, через скільки вимкнуть і коли дадуть світло.</li>
+      <li><b>Карта:</b> два шари — «Світла немає» і «Світло є» з лічильниками; масштаб і положення карти запам'ятовуються.</li>
+      <li><b>Історія:</b> діапазони «За добу / За сім днів / За місяць», лінія «% зі світлом», підписи точок, світла і темна теми.</li>
+      <li>Історія зберігається на сервері і спільна для всіх відвідувачів.</li>
+    </ul>
+    <template #footer><el-button type="primary" @click="showNews = false">Зрозуміло</el-button></template>
+  </el-dialog>
   <div class="tabs">
     <el-radio-group v-model="tab">
       <el-radio-button value="map">Карта</el-radio-button>
@@ -239,6 +250,12 @@ createApp({
     const error = ref('');
     const updatedAt = ref('');
     let lastLoadAt = 0, lastText = '';
+
+    // «Що нового» показуємо один раз для кожної версії (змініть NEWS_VERSION, коли є що показати)
+    const NEWS_KEY = 'svitlo_news_seen', NEWS_VERSION = '2026-11-08';
+    const newsSeen = () => { try { return localStorage.getItem(NEWS_KEY) === NEWS_VERSION; } catch(e){ return true; } };
+    const showNews = ref(!newsSeen());
+    watch(showNews, v => { if(!v) try { localStorage.setItem(NEWS_KEY, NEWS_VERSION); } catch(e){} });
 
     // активна вкладка запам'ятовується між оновленнями сторінки (localStorage, з try/catch)
     const TAB_KEY = 'svitlo_tab_v1';
@@ -577,7 +594,7 @@ createApp({
       if(chart){ chart.destroy(); chart = null; }
     });
 
-    return { loading, error, updatedAt, load, tab, history, last, historyMeta, historyLoaded, curOn, curOff, range, colorOn, colorOff, dark, showLines, showPct, headroom, allLabels };
+    return { showNews, loading, error, updatedAt, load, tab, history, last, historyMeta, historyLoaded, curOn, curOff, range, colorOn, colorOff, dark, showLines, showPct, headroom, allLabels };
   }
 }).use(ElementPlus, { locale: ElementPlusLocaleUk }).mount('#app');
 </script>
