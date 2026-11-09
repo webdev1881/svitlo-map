@@ -78,11 +78,10 @@
 <div id="app">
   <el-dialog v-model="showNews" title="Що нового" width="min(460px, 92vw)" align-center>
     <ul class="news">
-      <li><b>Підказка точки:</b> коли світло зникло чи з'явилося, скільки його не було і скільки триває відключення.</li>
-      <li><b>Графік ДТЕК</b> для груп Києва: наступне планове відключення, через скільки вимкнуть і коли дадуть світло.</li>
-      <li><b>Карта:</b> два шари — «Світла немає» і «Світло є» з лічильниками; масштаб і положення карти запам'ятовуються.</li>
-      <li><b>Історія:</b> діапазони «За добу / За сім днів / За місяць», лінія «% зі світлом», підписи точок, світла і темна теми.</li>
-      <li>Історія зберігається на сервері і спільна для всіх відвідувачів.</li>
+      <li><b>Діаграма стану</b> на карті: частка точок зі світлом (зелене) і без (червоне) прямо зараз.</li>
+      <li><b>Підказка точки:</b> графік ДТЕК для груп Києва — наступне вимкнення, коли дадуть світло, позначка «Світло є, але не по графіку».</li>
+      <li><b>Застосунок (PWA):</b> сайт можна встановити на телефон чи комп'ютер, оболонка працює і без мережі.</li>
+      <li>Масштаб і положення карти запам'ятовуються між відкриттями.</li>
     </ul>
     <template #footer><el-button type="primary" @click="showNews = false">Зрозуміло</el-button></template>
   </el-dialog>
@@ -283,7 +282,7 @@ createApp({
     let lastLoadAt = 0, lastText = '';
 
     // «Що нового» показуємо один раз для кожної версії (змініть NEWS_VERSION, коли є що показати)
-    const NEWS_KEY = 'svitlo_news_seen', NEWS_VERSION = '2026-11-09';
+    const NEWS_KEY = 'svitlo_news_seen', NEWS_VERSION = '2026-11-10';
     const newsSeen = () => { try { return localStorage.getItem(NEWS_KEY) === NEWS_VERSION; } catch(e){ return true; } };
     const showNews = ref(!newsSeen());
     watch(showNews, v => { if(!v) try { localStorage.setItem(NEWS_KEY, NEWS_VERSION); } catch(e){} });
