@@ -28,6 +28,7 @@
   #mymap{height:100vh;height:100dvh}   /* dvh — враховує адресний рядок мобільного браузера */
   .map-donut{background:#fff;border-radius:4px;box-shadow:0 1px 5px rgba(0,0,0,.4);padding:6px 8px;text-align:center;
     font-size:11px;color:#555;line-height:1.3}
+  .tip-hr{border:0;border-top:1px solid #ccc;margin:5px 0}
   .map-donut svg{display:block;margin:0 auto 2px}
   .map-donut b{font-size:13px;color:#222}
   .map-msg{position:absolute;left:50%;top:12px;transform:translateX(-50%);z-index:1000;
@@ -170,9 +171,9 @@ async function loadSchedule(){
   schedAt = Date.now();
   try { sched = await dbFetch('/schedule.json'); } catch(e){ schedAt = 0; }
 }
-function plannedLine(group, now){
+function plannedInfo(group, now, hasLight){   // -> { active: зараз за графіком немає світла, html } або null
   const m = /^Група (\d+\.\d+)$/.exec(group || '');   // лише Київ; «Київська обл. — група 2.1» та інші пропускаємо
-  if(!m || !sched || !sched.days) return '';
+  if(!m || !sched || !sched.days) return null;
   const g = m[1].replace('.', '_'), iv = [];
   Object.keys(sched.days).map(Number).sort((a, b) => a - b).forEach(d => {
     const row = sched.days[d][g];
@@ -186,12 +187,13 @@ function plannedLine(group, now){
     }
   });
   const cur = iv.find(i => i[1] > now);
-  if(!cur) return '🗓️ Планових відключень більше немає';
+  if(!cur) return { active: false, html: '🗓️ Планових відключень більше немає' };
   const end = fmtHM(cur[1]), at = ms => (fmtDM(ms) === fmtDM(now) ? '' : fmtDM(ms) + ' ') + fmtHM(ms);
   const active = cur[0] <= now;
-  return '🗓️ ' + (active ? 'Планове відключення' : 'Наступне планове') + ': ' + at(cur[0]) + ' - ' + (end === '00:00' ? '24:00' : end) +
-    '<br>' + (active ? '💡 Світло дадуть через ' + fmtDur(cur[1] - now) + ' (о ' + (end === '00:00' ? '24:00' : at(cur[1])) + ')'
-                     : '🔌 Наступне вимкнення через ' + fmtDur(cur[0] - now) + ' (о ' + at(cur[0]) + ')');
+  let html = '🗓️ ' + (active ? 'Планове відключення' : 'Наступне планове') + ': ' + at(cur[0]) + ' - ' + (end === '00:00' ? '24:00' : end);
+  if(!active) html += '<br>🔌 Наступне вимкнення через ' + fmtDur(cur[0] - now) + ' (о ' + at(cur[0]) + ')';
+  else if(!hasLight) html += '<br>💡 Світло дадуть через ' + fmtDur(cur[1] - now) + ' (о ' + (end === '00:00' ? '24:00' : at(cur[1])) + ')';
+  return { active, html };
 }
 
 // Тривалість попереднього відключення збирач пише в dur/{канал} = { on: мс увімкнення, d: мс }; читаємо лише при наведенні
@@ -205,20 +207,23 @@ async function ensureDur(id){
 // p = [lat, lon, назва, час зміни статусу (ISO), id каналу, група], st — статус ('1' світло є, '2' немає)
 function tipHtml(p, st, now = Date.now()){
   const t = Date.parse(p[3]);
+  const pl = plannedInfo(p[5], now, st === '1');
+  const notBySchedule = 'Світло є, але не по графіку';   // світло є, хоча за графіком ДТЕК зараз відключення
+  const offSchedule = st === '1' && pl && pl.active;
   let s = '<b>' + esc(p[2]) + '</b>';
   if(!isNaN(t)){
     if(st === '1'){
       // для зелених старших за добу API віддає «рівно добу тому» — точного часу немає
-      if(now - t >= (24 * 60 - 10) * 60000) s += '<br>Світло є';
+      if(now - t >= (24 * 60 - 10) * 60000) s += '<br>' + (offSchedule ? notBySchedule : 'Світло є');
       else {
         const d = durCache.get(p[4]);
         s += '<br>' + fmtWhen(t) + ' Світло з\'явилося<br>🕓 ' +
-          (d && d.on === t ? 'Його не було ' + fmtDur(d.d) : 'Світло є вже ' + fmtDur(now - t));
+          (d && d.on === t ? 'Його не було ' + fmtDur(d.d) : 'Світло є вже ' + fmtDur(now - t)) +
+          (offSchedule ? '<br>' + notBySchedule : '');
       }
     } else s += '<br>' + fmtWhen(t) + ' Світло зникло<br>🕓 Світла немає вже ' + fmtDur(now - t);
   }
-  const pl = plannedLine(p[5], now);
-  return s + (pl ? '<br>' + pl : '');
+  return s + (pl ? '<hr class="tip-hr">' + pl.html : '');
 }
 const fmtTime = ts => new Date(ts).toLocaleString('uk-UA',
   { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
