@@ -62,6 +62,7 @@
   .h-stat .el-card__body{padding:6px 14px}
   .h-stat .el-statistic__head{font-size:12px;margin-bottom:2px}
   .h-stat .el-statistic__content{font-size:22px;font-weight:700}
+  .h-arrow{font-size:16px;margin-left:6px;vertical-align:2px}
   .h-meta{flex:1;min-width:160px;font-size:12px;color:var(--el-text-color-secondary)}
   .h-ctl{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
   .h-ctl .el-check-tag{cursor:pointer}
@@ -103,6 +104,11 @@
 
   <div class="history" v-show="tab === 'history'">
     <div class="h-head">
+      <el-card class="h-stat" shadow="never" :title="pctTitle">
+        <el-statistic title="Світло є, %" :value="pctText">
+          <template #suffix>%<span v-if="pctTrend && pctTrend.dir !== 'flat'" class="h-arrow" :style="{ color: pctTrend.dir === 'up' ? colorOn : colorOff }">{{ pctTrend.dir === 'up' ? '▲' : '▼' }}</span></template>
+        </el-statistic>
+      </el-card>
       <el-card class="h-stat" shadow="never"><el-statistic group-separator=" " title="Світло є" :value="curOn" :value-style="{ color: colorOn }"></el-statistic></el-card>
       <el-card class="h-stat" shadow="never"><el-statistic group-separator=" " title="Світла немає" :value="curOff" :value-style="{ color: colorOff }"></el-statistic></el-card>
       <div class="h-meta">{{ historyMeta }}</div>
@@ -336,6 +342,24 @@ createApp({
     const last = computed(() => history.value.length ? history.value[history.value.length - 1] : null);
     const curOn = computed(() => counts.value ? counts.value.on : last.value ? last.value[1] : '—');
     const curOff = computed(() => counts.value ? counts.value.off : last.value ? last.value[2] : '—');
+    // поточний % «Світло є» і напрям відносно попереднього іншого значення з історії (▲ зросло, ▼ впало)
+    const pctOf = (on, off) => on + off > 0 ? on / (on + off) * 100 : null;
+    const curPct = computed(() => counts.value ? pctOf(counts.value.on, counts.value.off) : last.value ? pctOf(last.value[1], last.value[2]) : null);
+    const pctText = computed(() => curPct.value == null ? '—' : curPct.value.toFixed(1));
+    const pctTrend = computed(() => {
+      const c = curPct.value;
+      if(c == null) return null;
+      for(let i = history.value.length - 1; i >= 0; i--){
+        const r = history.value[i], p = pctOf(r[1], r[2]);
+        if(p != null && p.toFixed(1) !== c.toFixed(1)) return { dir: c > p ? 'up' : 'down', diff: c - p, prev: p, at: r[0] };
+      }
+      return { dir: 'flat' };
+    });
+    const pctTitle = computed(() => {
+      const t = pctTrend.value;
+      if(!t || t.dir === 'flat') return 'Відсоток точок зі світлом зараз';
+      return (t.diff > 0 ? '+' : '') + t.diff.toFixed(1) + ' п.п. (було ' + t.prev.toFixed(1) + '% о ' + fmtWhen(t.at) + ')';
+    });
     const historyMeta = computed(() => (history.value.length
       ? 'Записів: ' + history.value.length + ' · з ' + fmtTime(history.value[0][0]) + (RANGES[range.value].path === 'hourly' ? ' · середнє за годину' : '')
       : 'Поки що немає записів') + (dbError.value ? ' · помилка Firebase: ' + dbError.value : ''));
@@ -629,7 +653,7 @@ createApp({
       if(chart){ chart.destroy(); chart = null; }
     });
 
-    return { showNews, loading, error, updatedAt, load, tab, history, last, historyMeta, historyLoaded, curOn, curOff, range, colorOn, colorOff, dark, showLines, showPct, headroom, allLabels };
+    return { pctText, pctTrend, pctTitle, showNews, loading, error, updatedAt, load, tab, history, last, historyMeta, historyLoaded, curOn, curOff, range, colorOn, colorOff, dark, showLines, showPct, headroom, allLabels };
   }
 }).use(ElementPlus, { locale: ElementPlusLocaleUk }).mount('#app');
 </script>
